@@ -1,4 +1,4 @@
-fn Main(a: u5) void {
+fn Main() void {
     const T = u8[0..5];
     const x: T = 2;
 }

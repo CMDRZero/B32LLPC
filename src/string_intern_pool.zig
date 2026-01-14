@@ -6,7 +6,7 @@ var singleton_pool: ?*StringInternPool = null;
 
 pub const StringInternPool = struct {
     alloc: std.mem.Allocator,
-    array: std.ArrayList([] u8),
+    array: std.ArrayList([] const u8),
 
     pub const String = struct {
         tag: enum (u32) {_},
@@ -35,7 +35,7 @@ pub const StringInternPool = struct {
         singleton_pool = self;
     }
 
-    pub fn convert(self: *StringInternPool, str: [] u8) !String {
+    pub fn convert(self: *StringInternPool, str: [] const u8) !String {
         const maybeself = if (strings_can_print_themselves) self else {};
         for (self.array.items, 0..) |other_str, idx| {
             if (std.mem.eql(u8, str, other_str)) {

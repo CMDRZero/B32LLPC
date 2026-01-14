@@ -16,6 +16,8 @@ pub const SLIR = struct {
     pub const Reference = enum (u64) {
         _,
 
+        const num_u32: u64 = std.math.maxInt(u32) + 1;
+
         pub const TagType = enum {
             instr_ref,
             string_ref,
@@ -40,7 +42,7 @@ pub const SLIR = struct {
         }
 
         pub fn fromInt(value: u64) ?Reference {
-            const offset_value = std.math.add(u64, value, 2 * (std.math.maxInt(u32)+1)) catch return null;
+            const offset_value = std.math.add(u64, value, 2 * num_u32) catch return null;
             return @enumFromInt(offset_value);
         }
 
@@ -49,11 +51,14 @@ pub const SLIR = struct {
         }
 
         pub fn fromString(string: String) Reference {
-            return @enumFromInt(std.math.maxInt(u32) + 1 + @intFromEnum(string.tag));
+            return @enumFromInt(num_u32 + @intFromEnum(string.tag));
         }
 
         pub fn fromAny(value: anytype) ?Reference {
             switch (@TypeOf(value)) {
+                Reference => {
+                    return value;
+                },
                 comptime_int => {
                     return .fromInt(value);
                 },
@@ -63,8 +68,11 @@ pub const SLIR = struct {
                 String => {
                     return .fromString(value);
                 },
+                @import("tokenizer.zig").Token.Identifier => {
+                    @compileError("To convert `Identifier` to ReferenceType, convert it in an internpool.");
+                },
                 else => |T| {
-                    if (comptime std.math.cast(u64, std.math.maxInt(T))) |_| return .fromInt(value);
+                    if (comptime @typeInfo(T) == .int and std.math.cast(u64, std.math.maxInt(T)) != null) return .fromInt(value);
                     @compileError("Type `"++@typeName(T)++"` cannot be converted to ReferenceType.");
                 }
             }
@@ -94,20 +102,35 @@ pub const SLIR = struct {
         name: String,
         args: ArrayList(Arg),
         resT: Reference,
-        instrs: ArrayList(Instruction) = .empty,
+        blocks: ArrayList(Block) = .empty,
+        
 
         const Arg = struct {
             name: String,
             kind: Guid,
         };
 
-        pub const Instruction = struct {
+        pub const Block = struct {
+            name: String,
+            instrs: ArrayList(Instruction) = .empty,
+
+            pub const Instruction = struct {
             tag: Tag,
             results: ArrayList(Reference),
             args: ArrayList(Reference),
 
             pub const Tag = enum {
+                copy,
+                slice_or_range_refine,
+
+                const_value,
+                type_of,
+
+                signed_int,
                 unsigned_int,
+                floating_point,
+
+                debug_named_value,
             };
 
             pub fn format(self: Instruction, writer: *std.Io.Writer) !void {
@@ -116,10 +139,9 @@ pub const SLIR = struct {
                     for (self.results.items[1..]) |result| {
                         try writer.print(", {f}", .{result});
                     }
+                    try writer.print(" = ", .{});
                 }
-                
-                try writer.print(" = {t}", .{self.tag});
-                
+                try writer.print("{t}", .{self.tag});
                 if (self.args.items.len >= 1) {
                     try writer.print(" {f}", .{self.args.items[0]});
                     for (self.args.items[1..]) |arg| {
@@ -128,6 +150,9 @@ pub const SLIR = struct {
                 }
             }
         };
+        };
+
+        
     };
 
     pub fn init(alloc: Allocator, intern: *StringInternPool) SLIR {
@@ -140,17 +165,21 @@ pub const SLIR = struct {
     }
 
     pub fn format(self: SLIR, writer: *std.Io.Writer) !void {
-        try writer.print("+--- SLIR\n", .{});
-        try writer.print("| Next Guid: ({})\n", .{@intFromEnum(self.next_guid)});
+        try writer.print("┌─── SLIR\n", .{});
+        try writer.print("│ Next Guid: ({})\n", .{@intFromEnum(self.next_guid)});
         for (self.functions.items) |func| {
-            try writer.print("| +--- fn {f} (", .{func.name});
+            try writer.print("│ ┌─── fn {f} (", .{func.name});
             for (func.args.items) |arg| {
                 try writer.print("{f}: %{d}, ", .{arg.name, arg.kind});
             }
             try writer.print(") -> {f}\n", .{func.resT});
-            for (func.instrs.items) |instr| {
-                try writer.print("| | {f}\n", .{instr});
+            for (func.blocks.items) |block| {
+                try writer.print("│ │ ┌─── block {f}:\n", .{block.name});
+                for (block.instrs.items) |instr| {
+                    try writer.print("│ │ │ {f}\n", .{instr});
+                }
             }
+            
         }
     }
 
@@ -163,6 +192,23 @@ pub const SLIR = struct {
         std.debug.assert(self.functions.items.len > 0);
         const items = &self.functions.items;
         return &items.*[items.len - 1];
+    }
+
+    pub fn currentBlock(self: *SLIR) *Function.Block {
+        const curr_fn = self.currentFunction();
+        std.debug.assert(curr_fn.blocks.items.len > 0);
+        const items = &curr_fn.blocks.items;
+        return &items.*[items.len - 1];
+    }
+
+    pub fn appendBlock(self: *SLIR, name: ?String) !void {
+        const curr_fn = self.currentFunction();
+        const blockname: String = name orelse b: {
+            const buf = try self.alloc.alloc(u8, 16);
+            const slice = try std.fmt.bufPrint(buf, "%L{d}", .{self.getGuid()});
+            break :b try self.intern.convert(slice);
+        };
+        try curr_fn.blocks.append(self.alloc, .{.name = blockname});
     }
 };
 
@@ -189,5 +235,10 @@ pub const InParseSLIR = struct {
         self.source_file = state.source_file;
         self.slir.next_guid = state.next_guid;
         self.slir.functions.shrinkRetainingCapacity(state.num_functions);
+    }
+
+    pub inline fn restoreThrow(self: *InParseSLIR, save: SaveState) @TypeOf(null) {
+        self.setState(save);
+        return null;
     }
 };
