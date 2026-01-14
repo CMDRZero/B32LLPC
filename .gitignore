@@ -1,0 +1,4 @@
+.zig-cache/*
+*.exe
+*.pdb
+.vscode/*
