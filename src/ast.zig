@@ -7,6 +7,7 @@ const Token = tokenizer.Token;
 const StringInternPool = @import("string_intern_pool.zig").StringInternPool;
 const Guid = SLIR.Guid;
 const Reference = SLIR.Reference;
+const precedence = @import("precedence.zig");
 
 //Typing guide: Use errors for a failure and null for a probe that didnt succeed. !?T means this might return something or it might fail gently or it might fail hard.
 //Unless this function finds something that forces it to commit, speculatively return null, the caller can always promote null to an error
@@ -57,6 +58,7 @@ pub fn parseFunction(state: *InParseSLIR) !?void {
     curr_fn.resT = .fromGuid(resT);
 
     try expectSymbol(state, .@"{");
+    try state.slir.appendBlock(try state.slir.intern.convert("Entry"));
 
     while (!eatSymbol(state, .@"}")) {
         try parseStatement(state) orelse return error.expected_statement;
@@ -150,6 +152,8 @@ fn parseStatement(state: *InParseSLIR) !?void {
     if (eatSymbol(state, .@"const")) {
         const val, const kind = try parseVariableDecl(state) orelse return error.expected_variable_declaration;
         try addInstructionPoly(state, .{}, .const_value, .{val, kind});
+        // try expectSymbol(state, .@"=");
+        // _ = try parseExpression(state);
     } else if (eatSymbol(state, .@"var")) {
         return error.unimplemented;
     } else if (eatSymbol(state, .@"volatile")) {
@@ -167,20 +171,21 @@ fn parseVariableDecl(state: *InParseSLIR) !?struct{Guid, Guid} {
         .{state.slir.getGuid(), true}
     );
     try expectSymbol(state, .@"=");
-    const unnamed_result = state.slir.getGuid(); //try parseExpression(state);
+    const unnamed_result = try parseExpression(state); 
     try addInstructionPoly(state, .{}, .debug_named_value, .{name, unnamed_result});
     if (didInfer) {
         try addInstructionPoly(state, .{kind}, .type_of, .{unnamed_result});
     }
-    return .{unnamed_result, kind};
+    try expectSymbol(state, .@";");
+    return .{unnamed_result.toTaggedUnion().instr_ref, kind};
 }
 
 //Look at Zig Parse.zig for guidance
-// fn parseExpression(state: *InParseSLIR) !void {
+fn parseExpression(state: *InParseSLIR) !Reference {
+    return try precedence.parseExpression(state) orelse error.expected_expression;
+}
 
-// }
-
-fn addInstructionPoly(state: *InParseSLIR, results: anytype, tag: SLIR.Function.Block.Instruction.Tag, args: anytype) !void {
+pub fn addInstructionPoly(state: *InParseSLIR, results: anytype, tag: SLIR.Function.Block.Instruction.Tag, args: anytype) !void {
     const num_results = std.meta.fields(@TypeOf(results)).len;
     const heap_results = try state.slir.alloc.alloc(SLIR.Reference, num_results);
     inline for (0..num_results) |i| {
@@ -210,8 +215,6 @@ fn addInstructionPoly(state: *InParseSLIR, results: anytype, tag: SLIR.Function.
         .results = .fromOwnedSlice(heap_results),
         .args = .fromOwnedSlice(heap_args),
     });
-
-    _ = @import("precedence.zig").PrecClass;
 }
 
 //Naming convention:
@@ -221,17 +224,17 @@ fn addInstructionPoly(state: *InParseSLIR, results: anytype, tag: SLIR.Function.
 //expect- = eat but error on failure -> !void
 //All of these undo the consumption if an error occured
 
-fn popToken(state: *InParseSLIR) Token {
+pub fn popToken(state: *InParseSLIR) Token {
     return tokenizer.Token.popFrom(&state.source_file);
 }
 
-fn peekToken(state: *InParseSLIR) Token {
+pub fn peekToken(state: *InParseSLIR) Token {
     const src = state.source_file;
     defer state.source_file = src;
     return tokenizer.Token.popFrom(&state.source_file);
 }
 
-fn eatTokenExact(state: *InParseSLIR, token: Token) bool {
+pub fn eatTokenExact(state: *InParseSLIR, token: Token) bool {
     const src = state.source_file;
 
     const next_token = popToken(state);
@@ -241,7 +244,7 @@ fn eatTokenExact(state: *InParseSLIR, token: Token) bool {
     } else return true;
 }
 
-fn eatTokenType(state: *InParseSLIR, token: Token) bool {
+pub fn eatTokenType(state: *InParseSLIR, token: Token) bool {
     const src = state.source_file;
 
     const next_token = popToken(state);
@@ -257,25 +260,47 @@ fn eatTokenType(state: *InParseSLIR, token: Token) bool {
     } else return true;
 }
 
-fn expectTokenExact(state: *InParseSLIR, token: Token) !void {
+pub fn expectTokenExact(state: *InParseSLIR, token: Token) !void {
     if (!eatTokenExact(state, token)) error.unexpected_token;
 }
 
-fn expectTokenType(state: *InParseSLIR, token: Token) !void {
+pub fn expectTokenType(state: *InParseSLIR, token: Token) !void {
     if (!eatTokenType(state, token)) error.unexpected_token;
 }
 
 
-fn eatSymbol(state: *InParseSLIR, sym: Token.Symbol) bool {
+pub fn popSymbol(state: *InParseSLIR) !Token.Symbol {
+    if (peekToken(state) != .symbol) return error.expected_symbol;
+    return popToken(state).symbol;
+}
+
+pub fn eatSymbol(state: *InParseSLIR, sym: Token.Symbol) bool {
     return eatTokenExact(state, .{.symbol = sym});
 }
 
-fn expectSymbol(state: *InParseSLIR, sym: Token.Symbol) !void {
+pub fn expectSymbol(state: *InParseSLIR, sym: Token.Symbol) !void {
     if (!eatSymbol(state, sym)) return error.unexpected_symbol;
 }
 
 
-fn popIdentifier(state: *InParseSLIR) !Token.Identifier {
+pub fn popIdentifier(state: *InParseSLIR) !Token.Identifier {
     if (peekToken(state) != .identifier) return error.expected_identifier;
     return popToken(state).identifier;
+}
+
+pub fn popOperator(state: *InParseSLIR) !?tokenizer.Operator {
+    const save = state.getState();
+
+    var ret: tokenizer.Operator = .{.isInplace = false, .isOverloaded = false, .postMod = .none, .tag = undefined};
+    if (eatSymbol(state, .@".")) ret.isOverloaded = true;
+    const opsym = try popSymbol(state);
+    ret.tag = std.meta.stringToEnum(tokenizer.Operator.Tag, @tagName(opsym)) orelse return state.restoreThrow(save);
+    if (eatSymbol(state, .@"%")) {
+        ret.postMod = .wrapping;
+    } else if (eatSymbol(state, .@"|")) {
+        ret.postMod = .clamping;
+    }
+    if (eatSymbol(state, .@"=")) ret.isOverloaded = true;
+    try ret.validate();
+    return ret;
 }

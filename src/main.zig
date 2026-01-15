@@ -14,6 +14,7 @@ pub fn main(init: std.process.Init) !void {
     const filetext = try std.Io.Dir.cwd().readFileAlloc(init.io, filepath, gpa, .limited(max_bytes)); //0.16.0-dev.2146+98db4570b version
     defer gpa.free(filetext);
     
+    //In the future, use the first nonself argument for what filepath to load...
     std.debug.print("Args are:\n", .{});
     for (try init.minimal.args.toSlice(arena)) |arg| {
         std.debug.print(" - {s}\n", .{arg});

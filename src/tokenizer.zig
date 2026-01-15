@@ -7,6 +7,64 @@ pub const TokenTag = enum {
     kind,
 };
 
+pub const Operator = struct {
+    tag: Tag,
+    isOverloaded: bool,
+    isInplace: bool,
+    postMod: PostMod,
+
+    pub const PostMod = enum {
+        none,
+        wrapping,
+        clamping,
+    };
+
+    pub const Tag = enum {
+        @"+",
+        @"-",
+        @"*",
+        @"%",
+        @"/",
+
+        @"<<",
+        @">>",
+
+        @"&",
+        @"&~",
+        @"|",
+        @"|~",
+        @"^",
+        @"^~",
+
+        @"orelse",
+        
+        @"==",
+        @"!=",
+        @"<",
+        @">",
+        @"<=",
+        @">=",
+        
+        @"and",
+        @"or",
+    };
+
+    pub fn validate(self: Operator) !void {
+        if (self.isOverloaded) {
+            switch (self.tag) {
+                .@"orelse", .@"and", .@"or", 
+                .@"==", .@"!=", .@"<", .@">", .@"<=", .@">=" => return error.not_overloadable,
+                else => {},
+            }
+            if (self.postMod != .none) return error.cannot_postmodify_overload;
+        }
+        if (self.postMod != .none) switch (self.tag) {
+            .@"+", .@"-", .@"*", .@"<<" => {},
+            else => return error.not_postmodifiable,
+        };
+    }
+};
+
 pub const Token = union (TokenTag) {
     symbol: Symbol,
     identifier: Identifier,
@@ -53,8 +111,11 @@ pub const Token = union (TokenTag) {
         @">>",
         
         @"&",
+        @"&~",
         @"|",
+        @"|~",
         @"^",
+        @"^~",
 
         @"orelse",
 

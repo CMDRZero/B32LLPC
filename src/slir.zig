@@ -1,6 +1,6 @@
 const std = @import("std");
 const StringInternPool = @import("string_intern_pool.zig").StringInternPool;
-
+const tokenizer = @import("tokenizer.zig");
 const ArrayList = std.ArrayList;
 const mem = std.mem;
 const Allocator = mem.Allocator;
@@ -120,6 +120,22 @@ pub const SLIR = struct {
             args: ArrayList(Reference),
 
             pub const Tag = enum {
+                add,
+                sub,
+                mul,
+                div,
+                mod,
+
+                bit_shift_left,
+                bit_shift_right,
+
+                bit_and,
+                bit_andn,
+                bit_xor,
+                bit_xorn,
+                bit_or,
+                bit_orn,
+
                 copy,
                 slice_or_range_refine,
 
@@ -130,7 +146,31 @@ pub const SLIR = struct {
                 unsigned_int,
                 floating_point,
 
+                decimal_integer,
+
                 debug_named_value,
+
+                pub fn fromOperator(op: tokenizer.Operator.Tag) Tag {
+                    return switch (op) {
+                        .@"+" => .add,
+                        .@"-" => .sub,
+                        .@"*" => .mul,
+                        .@"/" => .div,
+                        .@"%" => .mod,
+                        
+                        .@"<<" => .bit_shift_left,
+                        .@">>" => .bit_shift_right,
+                        
+                        .@"&" => .bit_and,
+                        .@"&~" => .bit_andn,
+                        .@"^" => .bit_xor,
+                        .@"^~" => .bit_xorn,
+                        .@"|" => .bit_or,
+                        .@"|~" => .bit_orn,
+
+                        else => unreachable,
+                    };
+                }
             };
 
             pub fn format(self: Instruction, writer: *std.Io.Writer) !void {

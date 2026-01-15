@@ -1,7 +1,25 @@
 const std = @import("std");
+const type_indexed_array = @import("type_indexed_array.zig");
+const TypeIndexArrayPointer = type_indexed_array.TypeIndexArrayPointer;
+const TypeIndexArray = type_indexed_array.TypeIndexArray;
+const tokenizer = @import("tokenizer.zig");
+const slir = @import("slir.zig");
+const SLIR = slir.SLIR;
+const InParseSLIR = slir.InParseSLIR;
+const Token = tokenizer.Token;
+const StringInternPool = @import("string_intern_pool.zig").StringInternPool;
+const Guid = SLIR.Guid;
+const Reference = SLIR.Reference;
+const ast = @import("ast.zig");
 
 pub const PrecClass = struct {
     group: Group,
+    assoc: Assoc = .left,
+
+    const Assoc = enum {
+        left,
+        none,
+    };
 
     const Group = enum {
         const num_distinct = std.meta.fields(Group).len;
@@ -136,3 +154,100 @@ pub const PrecClass = struct {
         };
     }
 };
+
+const precedence_group: TypeIndexArray(tokenizer.Operator.Tag, PrecClass) = b: {
+    var groups: TypeIndexArray(tokenizer.Operator.Tag, PrecClass) = undefined;
+    groups.set(.@"+", .{.group = .arithmetic_sum});
+    groups.set(.@"-", .{.group = .arithmetic_sum});
+    groups.set(.@"*", .{.group = .arithmetic_product_chainable});
+    groups.set(.@"%", .{.group = .arithmetic_product_nonchainable, .assoc = .none});
+    groups.set(.@"/", .{.group = .arithmetic_product_chainable});
+    
+    groups.set(.@"<<", .{.group = .bitwise_shift});
+    groups.set(.@">>", .{.group = .bitwise_shift});
+    
+    groups.set(.@"&", .{.group = .bitwise_product});
+    groups.set(.@"&~", .{.group = .bitwise_product});
+    groups.set(.@"^", .{.group = .bitwise_xor});
+    groups.set(.@"^~", .{.group = .bitwise_xor});
+    groups.set(.@"|", .{.group = .bitwise_sum});
+    groups.set(.@"|~", .{.group = .bitwise_sum});
+    
+    groups.set(.@"orelse", .{.group = .coercion});
+    
+    groups.set(.@"==", .{.group = .comparison, .assoc = .none});
+    groups.set(.@"!=", .{.group = .comparison, .assoc = .none});
+    groups.set(.@"<", .{.group = .comparison, .assoc = .none});
+    groups.set(.@">", .{.group = .comparison, .assoc = .none});
+    groups.set(.@"<=", .{.group = .comparison, .assoc = .none});
+    groups.set(.@">", .{.group = .comparison, .assoc = .none});
+    
+    groups.set(.@"and", .{.group = .logical_product});
+    groups.set(.@"or", .{.group = .logical_sum});
+    
+    break :b groups;
+};
+
+pub fn parseExpression(state: *InParseSLIR) !?Reference {
+    const save = state.getState();
+    return try parseExprPrecedence(state, .start) orelse state.restoreThrow(save);
+}
+
+fn parseExprPrecedence(state: *InParseSLIR, min_exc_prec: PrecClass) !?Reference {
+    var node: Reference = try parsePrefixExpr(state) orelse return null;
+
+    var save = state.getState();
+    while (true) : (save = state.getState()) {
+        var operator: tokenizer.Operator = undefined;
+        const info: PrecClass = b: {
+            operator = (ast.popOperator(state) catch break :b .start) orelse (break :b .start);
+            break :b precedence_group.get(operator.tag);
+        };
+        const rel = info.cmp(min_exc_prec) orelse return error.ambiguous_precedence;
+
+        if (rel == .lt) {
+            state.setState(save);
+            break;
+        }
+
+        if (min_exc_prec.group == info.group and min_exc_prec.assoc == .none and info.assoc == .none) {
+            return error.illegal_chained_operators;
+        }
+
+        if (rel == .eq) {
+            state.setState(save);
+            break;
+        }
+
+        const rhs = try parseExprPrecedence(state, info) orelse {
+            return error.expected_expression;
+        };
+
+        const res = state.slir.getGuid();
+        try ast.addInstructionPoly(state, .{res}, .fromOperator(operator.tag), .{node, rhs});
+        node = .fromGuid(res);
+    }
+
+    return node;
+}
+
+//TODO: Woefully unfinished
+fn parsePrefixExpr(state: *InParseSLIR) !?Reference {
+    const token = ast.popToken(state);
+    switch (token) {
+        .kind => |kind| {
+            const res = state.slir.getGuid();
+            try ast.addInstructionPoly(state, .{res}, .signed_int, .{kind.bits});
+            return .fromGuid(res);
+        },
+        .literal => |lit| switch (lit.tag) {
+            .dec_int => |str| {
+                const res = state.slir.getGuid();
+                try ast.addInstructionPoly(state, .{res}, .decimal_integer, .{try state.slir.intern.convert(str)});
+                return .fromGuid(res);
+            },
+            else => @panic("TODO"),
+        },
+        else => @panic("TODO"),
+    }
+}
