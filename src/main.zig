@@ -6,19 +6,22 @@ const StringInternPool = @import("string_intern_pool.zig").StringInternPool;
 
 const max_bytes = 1_000_000;
 
-pub fn main() !void {
-    var gpa: std.heap.DebugAllocator(.{}) = .init;
-    const alloc = gpa.allocator();
-    const arena = std.heap.ArenaAllocator.init(alloc);
+pub fn main(init: std.process.Init) !void {
+    const gpa = init.gpa;
+    const arena = init.arena.allocator();
 
     const filepath = "code/test_0.llpc";
-    _ = arena;
-    const filetext = try std.fs.cwd().readFileAlloc(alloc, filepath, max_bytes);
-    defer alloc.free(filetext);
+    const filetext = try std.Io.Dir.cwd().readFileAlloc(init.io, filepath, gpa, .limited(max_bytes)); //0.16.0-dev.2146+98db4570b version
+    defer gpa.free(filetext);
     
-    var intern: StringInternPool = .init(alloc);
+    std.debug.print("Args are:\n", .{});
+    for (try init.minimal.args.toSlice(arena)) |arg| {
+        std.debug.print(" - {s}\n", .{arg});
+    }
+
+    var intern: StringInternPool = .init(arena);
     intern.globalize();
 
-    const slir = try temp_ast.parse(alloc, &intern, filetext);
+    const slir = try temp_ast.parse(arena, &intern, filetext);
     std.debug.print("{f}", .{slir});
 }

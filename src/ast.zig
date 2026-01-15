@@ -210,6 +210,8 @@ fn addInstructionPoly(state: *InParseSLIR, results: anytype, tag: SLIR.Function.
         .results = .fromOwnedSlice(heap_results),
         .args = .fromOwnedSlice(heap_args),
     });
+
+    _ = @import("precedence.zig").PrecClass;
 }
 
 //Naming convention:
