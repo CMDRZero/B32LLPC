@@ -1,5 +1,5 @@
 fn Main() void {
-    const z = 1 + 2;
+    const z = 1 + 2 * 3 * 4;
     const z_: u4 = 1 + 2;
     const T = u8[0..5];
     const x: T = 2;
