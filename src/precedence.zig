@@ -233,17 +233,21 @@ fn parseExprPrecedence(state: MutSLIR, min_exc_prec: PrecClass) !?Reference {
 
 //TODO: Woefully unfinished
 fn parsePrefixExpr(state: MutSLIR) !?Reference {
+    return parsePrimative(state);
+}
+
+fn parsePrimative(state: MutSLIR) !?Reference {
     const token = state.popToken();
     switch (token) {
         .kind => |kind| {
             const res = state.slir.getGuid();
-            try state.addInstructionPoly(.{res}, .signed_int, .{kind.bits});
+            try state.addInstructionPoly(.{res}, .fromKindTag(kind.tag), .{kind.bits});
             return .fromGuid(res);
         },
         .literal => |lit| switch (lit.tag) {
             .dec_int => |str| {
                 const res = state.slir.getGuid();
-                try state.addInstructionPoly(.{res}, .decimal_integer, .{try state.slir.intern.convert(str)});
+                try state.addInstructionPoly(.{res}, .decimal_integer_lit, .{try state.slir.intern.convert(str)});
                 return .fromGuid(res);
             },
             else => @panic("TODO"),

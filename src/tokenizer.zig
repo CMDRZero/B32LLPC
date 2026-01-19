@@ -291,7 +291,7 @@ pub const Token = union (TokenTag) {
         tag: Tag,
         bits: usize,
 
-        const Tag = enum {
+        pub const Tag = enum {
             unsigned_int,
             signed_int,
             float,

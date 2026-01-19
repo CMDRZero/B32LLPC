@@ -1,10 +1,11 @@
 const std = @import("std");
-const StringInternPool = @import("string_intern_pool.zig").StringInternPool;
-const tokenizer = @import("tokenizer.zig");
 const ArrayList = std.ArrayList;
 const mem = std.mem;
 const Allocator = mem.Allocator;
+
+const StringInternPool = @import("string_intern_pool.zig").StringInternPool;
 const String = StringInternPool.String;
+const tokenizer = @import("tokenizer.zig");
 
 pub const SLIR = struct {
     alloc: Allocator,
@@ -13,7 +14,7 @@ pub const SLIR = struct {
     functions: ArrayList(Function),
 
     //Either an instruction reference, a string intern pool reference, or a plain integer.
-    pub const Reference = enum (u64) {
+    pub const Reference = enum(u64) {
         _,
 
         const num_u32: u64 = std.math.maxInt(u32) + 1;
@@ -24,7 +25,7 @@ pub const SLIR = struct {
             int,
         };
 
-        pub const Tagged = union (TagType) {
+        pub const Tagged = union(TagType) {
             instr_ref: Guid,
             string_ref: String,
             int: u64,
@@ -32,13 +33,13 @@ pub const SLIR = struct {
 
         pub fn toTaggedUnion(self: Reference) Reference.Tagged {
             var val: u64 = @intFromEnum(self);
-            if (val <= std.math.maxInt(u32)) return .{.instr_ref = @enumFromInt(val)};
-            val -= std.math.maxInt(u32) + 1;
-            
-            if (val <= std.math.maxInt(u32)) return .{.string_ref = .{.tag = @enumFromInt(val), .pool = undefined}};
+            if (val <= std.math.maxInt(u32)) return .{ .instr_ref = @enumFromInt(val) };
             val -= std.math.maxInt(u32) + 1;
 
-            return .{.int = val};
+            if (val <= std.math.maxInt(u32)) return .{ .string_ref = .{ .tag = @enumFromInt(val), .pool = undefined } };
+            val -= std.math.maxInt(u32) + 1;
+
+            return .{ .int = val };
         }
 
         pub fn fromInt(value: u64) ?Reference {
@@ -73,8 +74,8 @@ pub const SLIR = struct {
                 },
                 else => |T| {
                     if (comptime @typeInfo(T) == .int and std.math.cast(u64, std.math.maxInt(T)) != null) return .fromInt(value);
-                    @compileError("Type `"++@typeName(T)++"` cannot be converted to ReferenceType.");
-                }
+                    @compileError("Type `" ++ @typeName(T) ++ "` cannot be converted to ReferenceType.");
+                },
             }
         }
 
@@ -88,12 +89,12 @@ pub const SLIR = struct {
                 },
                 .int => |int| {
                     try writer.print("#{d}", .{int});
-                }
+                },
             }
-        } 
+        }
     };
 
-    pub const Guid = enum (u32) {
+    pub const Guid = enum(u32) {
         _,
         const init: Guid = @enumFromInt(1);
     };
@@ -103,7 +104,7 @@ pub const SLIR = struct {
         args: ArrayList(Arg),
         resT: Reference,
         blocks: ArrayList(Block) = .empty,
-        
+        scope_depth: u32 = 0,
 
         const Arg = struct {
             name: String,
@@ -113,86 +114,102 @@ pub const SLIR = struct {
         pub const Block = struct {
             name: String,
             instrs: ArrayList(Instruction) = .empty,
+            scope_ids: ArrayList(u32) = .empty,
 
             pub const Instruction = struct {
-            tag: Tag,
-            results: ArrayList(Reference),
-            args: ArrayList(Reference),
+                tag: Tag,
+                results: ArrayList(Reference),
+                args: ArrayList(Reference),
 
-            pub const Tag = enum {
-                add,
-                sub,
-                mul,
-                div,
-                mod,
+                pub const Tag = enum {
+                    add,
+                    sub,
+                    mul,
+                    div,
+                    mod,
 
-                bit_shift_left,
-                bit_shift_right,
+                    bit_shift_left,
+                    bit_shift_right,
 
-                bit_and,
-                bit_andn,
-                bit_xor,
-                bit_xorn,
-                bit_or,
-                bit_orn,
+                    bit_and,
+                    bit_andn,
+                    bit_xor,
+                    bit_xorn,
+                    bit_or,
+                    bit_orn,
 
-                copy,
-                slice_or_range_refine,
+                    alias,
+                    slice_or_range_refine,
 
-                const_value,
-                type_of,
+                    value,
 
-                signed_int,
-                unsigned_int,
-                floating_point,
+                    type_of,
 
-                decimal_integer,
+                    ensure_is_type,
 
-                debug_named_value,
+                    qualify_type_const,
+                    qualify_type_var,
+                    qualify_type_view,
+                    qualify_type_mut,
 
-                pub fn fromOperator(op: tokenizer.Operator.Tag) Tag {
-                    return switch (op) {
-                        .@"+" => .add,
-                        .@"-" => .sub,
-                        .@"*" => .mul,
-                        .@"/" => .div,
-                        .@"%" => .mod,
-                        
-                        .@"<<" => .bit_shift_left,
-                        .@">>" => .bit_shift_right,
-                        
-                        .@"&" => .bit_and,
-                        .@"&~" => .bit_andn,
-                        .@"^" => .bit_xor,
-                        .@"^~" => .bit_xorn,
-                        .@"|" => .bit_or,
-                        .@"|~" => .bit_orn,
+                    type_signed_int,
+                    type_unsigned_int,
+                    type_floating_point,
 
-                        else => unreachable,
-                    };
+                    decimal_integer_lit,
+
+                    named_value,
+                    load_named_value,
+
+                    pub fn fromOperator(op: tokenizer.Operator.Tag) Tag {
+                        return switch (op) {
+                            .@"+" => .add,
+                            .@"-" => .sub,
+                            .@"*" => .mul,
+                            .@"/" => .div,
+                            .@"%" => .mod,
+
+                            .@"<<" => .bit_shift_left,
+                            .@">>" => .bit_shift_right,
+
+                            .@"&" => .bit_and,
+                            .@"&~" => .bit_andn,
+                            .@"^" => .bit_xor,
+                            .@"^~" => .bit_xorn,
+                            .@"|" => .bit_or,
+                            .@"|~" => .bit_orn,
+
+                            else => unreachable,
+                        };
+                    }
+
+                    pub fn fromKindTag(op: tokenizer.Token.Kind.Tag) Tag {
+                        return switch (op) {
+                            .unsigned_int => .type_unsigned_int,
+                            .signed_int => .type_signed_int,
+                            .float => .type_floating_point,
+                        };
+                    }
+                };
+
+                pub fn format(self: Instruction, writer: *std.Io.Writer) !void {
+                    if (self.results.items.len >= 1) {
+                        try writer.print("{f}", .{self.results.items[0]});
+                        for (self.results.items[1..]) |result| {
+                            try writer.print(", {f}", .{result});
+                        }
+                        try writer.print(" = ", .{});
+                    }
+                    try writer.print("{t}", .{self.tag});
+                    if (self.args.items.len >= 1) {
+                        try writer.print(" {f}", .{self.args.items[0]});
+                        for (self.args.items[1..]) |arg| {
+                            try writer.print(", {f}", .{arg});
+                        }
+                    }
                 }
             };
-
-            pub fn format(self: Instruction, writer: *std.Io.Writer) !void {
-                if (self.results.items.len >= 1) {
-                    try writer.print("{f}", .{self.results.items[0]});
-                    for (self.results.items[1..]) |result| {
-                        try writer.print(", {f}", .{result});
-                    }
-                    try writer.print(" = ", .{});
-                }
-                try writer.print("{t}", .{self.tag});
-                if (self.args.items.len >= 1) {
-                    try writer.print(" {f}", .{self.args.items[0]});
-                    for (self.args.items[1..]) |arg| {
-                        try writer.print(", {f}", .{arg});
-                    }
-                }
-            }
         };
-        };
-
-        
     };
 
     pub fn init(alloc: Allocator, intern: *StringInternPool) SLIR {
@@ -210,16 +227,23 @@ pub const SLIR = struct {
         for (self.functions.items) |func| {
             try writer.print("│ ┌─── fn {f} (", .{func.name});
             for (func.args.items) |arg| {
-                try writer.print("{f}: %{d}, ", .{arg.name, arg.kind});
+                try writer.print("{f}: %{d}, ", .{ arg.name, arg.kind });
             }
             try writer.print(") -> {f}\n", .{func.resT});
             for (func.blocks.items) |block| {
-                try writer.print("│ │ ┌─── block {f}:\n", .{block.name});
+                try writer.print("│ │ ┌─── block {f}", .{block.name});
+                if (block.scope_ids.items.len > 0) {
+                    try writer.print(" {{{}", .{block.scope_ids.items[0]});
+                    for (block.scope_ids.items[1..]) |scope_id| {
+                        try writer.print(".{}", .{scope_id});
+                    }
+                    try writer.print("}}", .{});
+                }
+                try writer.print(":\n", .{});
                 for (block.instrs.items) |instr| {
                     try writer.print("│ │ │ {f}\n", .{instr});
                 }
             }
-            
         }
     }
 
@@ -241,6 +265,22 @@ pub const SLIR = struct {
         return &items.*[items.len - 1];
     }
 
+    pub fn createOnInstance(self: *SLIR) !void {
+        const curr_fn = self.currentFunction();
+        std.debug.assert(curr_fn.scope_depth == 0);
+        const blockname: String = try self.intern.convert("OnInstance");
+        try curr_fn.blocks.append(self.alloc, .{ .name = blockname });
+    }
+
+    pub fn createEntry(self: *SLIR) !void {
+        const curr_fn = self.currentFunction();
+        std.debug.assert(curr_fn.scope_depth == 1);
+        const blockname: String = try self.intern.convert("Entry");
+        try curr_fn.blocks.append(self.alloc, .{ .name = blockname });
+        const curr_block = self.currentBlock();
+        try curr_block.scope_ids.append(self.alloc, 0);
+    }
+
     pub fn appendBlock(self: *SLIR, name: ?String) !void {
         const curr_fn = self.currentFunction();
         const blockname: String = name orelse b: {
@@ -248,6 +288,33 @@ pub const SLIR = struct {
             const slice = try std.fmt.bufPrint(buf, "%L{d}", .{self.getGuid()});
             break :b try self.intern.convert(slice);
         };
-        try curr_fn.blocks.append(self.alloc, .{.name = blockname});
+        try curr_fn.blocks.ensureUnusedCapacity(self.alloc, 1);
+        const prev_block = self.currentBlock();
+        curr_fn.blocks.appendAssumeCapacity(.{ .name = blockname });
+        const curr_block = self.currentBlock();
+        try curr_block.scope_ids.ensureUnusedCapacity(self.alloc, curr_fn.scope_depth);
+        if (curr_fn.scope_depth > prev_block.scope_ids.items.len) {
+            curr_block.scope_ids.appendSliceAssumeCapacity(prev_block.scope_ids.items);
+            const diff = curr_fn.scope_depth - prev_block.scope_ids.items.len;
+            curr_block.scope_ids.appendNTimesAssumeCapacity(0, diff);
+        } else {
+            curr_block.scope_ids.appendSliceAssumeCapacity(prev_block.scope_ids.items[0..curr_fn.scope_depth]);
+            curr_block.scope_ids.items[curr_fn.scope_depth - 1] += 1;
+        }
+    }
+
+    //Note for how scopes work, if we have some pattern A.B.C and matching to D.E.F (Is DEF > ABC?)
+    //We match if the second is a subset of the first, starts the same.
+    //Or, we match if all terms but the last are the same and the 2nd's final term if equal or less
+    //0 < 0.0,      0 < 0.1,    0 < 1,      0.1 !< 1,       0 < 0
+    //For top level unordered constructs, we have some special handling not shown here yet
+    pub fn openScope(self: *SLIR) !void {
+        const curr_fn = self.currentFunction();
+        curr_fn.scope_depth += 1;
+    }
+
+    pub fn closeScope(self: *SLIR) !void {
+        const curr_fn = self.currentFunction();
+        curr_fn.scope_depth -= 1;
     }
 };
