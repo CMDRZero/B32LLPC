@@ -5,7 +5,7 @@ const TypeIndexArray = type_indexed_array.TypeIndexArray;
 const tokenizer = @import("tokenizer.zig");
 const slir = @import("slir.zig");
 const SLIR = slir.SLIR;
-const InParseSLIR = slir.InParseSLIR;
+const MutSLIR = @import("slir_construction.zig").MutSLIR;
 const Token = tokenizer.Token;
 const StringInternPool = @import("string_intern_pool.zig").StringInternPool;
 const Guid = SLIR.Guid;
@@ -188,19 +188,19 @@ const precedence_group: TypeIndexArray(tokenizer.Operator.Tag, PrecClass) = b: {
     break :b groups;
 };
 
-pub fn parseExpression(state: *InParseSLIR) !?Reference {
+pub fn parseExpression(state: MutSLIR) !?Reference {
     const save = state.getState();
     return try parseExprPrecedence(state, .start) orelse state.restoreThrow(save);
 }
 
-fn parseExprPrecedence(state: *InParseSLIR, min_exc_prec: PrecClass) !?Reference {
+fn parseExprPrecedence(state: MutSLIR, min_exc_prec: PrecClass) !?Reference {
     var node: Reference = try parsePrefixExpr(state) orelse return null;
 
     var save = state.getState();
     while (true) : (save = state.getState()) {
         var operator: tokenizer.Operator = undefined;
         const info: PrecClass = b: {
-            operator = (ast.popOperator(state) catch break :b .start) orelse (break :b .start);
+            operator = (state.popOperator() catch break :b .start) orelse (break :b .start);
             break :b precedence_group.get(operator.tag);
         };
         const rel = info.cmp(min_exc_prec) orelse return error.ambiguous_precedence;
@@ -224,7 +224,7 @@ fn parseExprPrecedence(state: *InParseSLIR, min_exc_prec: PrecClass) !?Reference
         };
 
         const res = state.slir.getGuid();
-        try ast.addInstructionPoly(state, .{res}, .fromOperator(operator.tag), .{node, rhs});
+        try state.addInstructionPoly(.{res}, .fromOperator(operator.tag), .{node, rhs});
         node = .fromGuid(res);
     }
 
@@ -232,18 +232,18 @@ fn parseExprPrecedence(state: *InParseSLIR, min_exc_prec: PrecClass) !?Reference
 }
 
 //TODO: Woefully unfinished
-fn parsePrefixExpr(state: *InParseSLIR) !?Reference {
-    const token = ast.popToken(state);
+fn parsePrefixExpr(state: MutSLIR) !?Reference {
+    const token = state.popToken();
     switch (token) {
         .kind => |kind| {
             const res = state.slir.getGuid();
-            try ast.addInstructionPoly(state, .{res}, .signed_int, .{kind.bits});
+            try state.addInstructionPoly(.{res}, .signed_int, .{kind.bits});
             return .fromGuid(res);
         },
         .literal => |lit| switch (lit.tag) {
             .dec_int => |str| {
                 const res = state.slir.getGuid();
-                try ast.addInstructionPoly(state, .{res}, .decimal_integer, .{try state.slir.intern.convert(str)});
+                try state.addInstructionPoly(.{res}, .decimal_integer, .{try state.slir.intern.convert(str)});
                 return .fromGuid(res);
             },
             else => @panic("TODO"),

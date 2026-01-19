@@ -251,34 +251,3 @@ pub const SLIR = struct {
         try curr_fn.blocks.append(self.alloc, .{.name = blockname});
     }
 };
-
-pub const InParseSLIR = struct {
-    source_file: [] u8,
-    slir: SLIR,
-
-    pub const SaveState = struct {
-        source_file: [] u8,
-        next_guid: SLIR.Guid,
-        num_functions: usize,
-    };
-
-
-    pub fn getState(self: InParseSLIR) SaveState {
-        return .{
-            .source_file = self.source_file,
-            .next_guid = self.slir.next_guid,
-            .num_functions = self.slir.functions.items.len,
-        };
-    }
-
-    pub fn setState(self: *InParseSLIR, state: SaveState) void {
-        self.source_file = state.source_file;
-        self.slir.next_guid = state.next_guid;
-        self.slir.functions.shrinkRetainingCapacity(state.num_functions);
-    }
-
-    pub inline fn restoreThrow(self: *InParseSLIR, save: SaveState) @TypeOf(null) {
-        self.setState(save);
-        return null;
-    }
-};

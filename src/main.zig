@@ -10,7 +10,7 @@ pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const arena = init.arena.allocator();
 
-    const filepath = "code/test_0.llpc";
+    const filepath = "code/test_type_val.llpc";
     const filetext = try std.Io.Dir.cwd().readFileAlloc(init.io, filepath, gpa, .limited(max_bytes)); //0.16.0-dev.2146+98db4570b version
     defer gpa.free(filetext);
     

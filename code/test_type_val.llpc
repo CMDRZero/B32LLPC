@@ -1,0 +1,4 @@
+fn Main() void {
+    const T = u8;
+    const x: T = 2;
+}
