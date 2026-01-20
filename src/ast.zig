@@ -11,14 +11,15 @@ pub const MutSLIR = slir_cons.MutSLIR;
 const StringInternPool = @import("string_intern_pool.zig").StringInternPool;
 const tokenizer = @import("tokenizer.zig");
 const Token = tokenizer.Token;
+const ComputePool = @import("compute_pool.zig").ComputePool;
 
 //Typing guide: Use errors for a failure and null for a probe that didnt succeed. !?T means this might return something or it might fail gently or it might fail hard.
 //Unless this function finds something that forces it to commit, speculatively return null, the caller can always promote null to an error
 
-pub fn parse(alloc: std.mem.Allocator, intern: *StringInternPool, file: []u8) !SLIR {
+pub fn parse(alloc: std.mem.Allocator, intern: *StringInternPool, computes: *ComputePool, file: []u8) !SLIR {
     var state: slir_cons.InParseSLIR = .{
         .source_file = file,
-        .slir = .init(alloc, intern),
+        .slir = .init(alloc, intern, computes),
     };
     errdefer {
         //std.debug.print("Unrecoverable error at:\n`{s}`\n", .{state.source_file[0..20]});
@@ -166,7 +167,8 @@ fn parseTypePrimative(state: MutSLIR) !?Guid {
         },
         .identifier => |id| {
             try state.addInstructionPoly(.{guid}, .load_named_value, .{id});
-            try state.addInstructionPoly(.{}, .ensure_is_type, .{guid});
+            const throw_away_guid = state.slir.getGuid();
+            try state.addInstructionPoly(.{throw_away_guid}, .ensure_is_type, .{guid});
             return guid;
         },
         else => return state.restoreThrow(save),

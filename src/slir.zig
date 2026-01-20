@@ -4,12 +4,15 @@ const mem = std.mem;
 const Allocator = mem.Allocator;
 
 const StringInternPool = @import("string_intern_pool.zig").StringInternPool;
+const ComputePool = @import("compute_pool.zig").ComputePool;
 const String = StringInternPool.String;
+const Compute =ComputePool.Compute;
 const tokenizer = @import("tokenizer.zig");
 
 pub const SLIR = struct {
     alloc: Allocator,
     intern: *StringInternPool,
+    computes: *ComputePool,
     next_guid: Guid,
     functions: ArrayList(Function),
 
@@ -22,28 +25,33 @@ pub const SLIR = struct {
         pub const TagType = enum {
             instr_ref,
             string_ref,
+            compute_ref,
             int,
         };
 
         pub const Tagged = union(TagType) {
             instr_ref: Guid,
             string_ref: String,
+            compute_ref: Compute,
             int: u64,
         };
 
         pub fn toTaggedUnion(self: Reference) Reference.Tagged {
             var val: u64 = @intFromEnum(self);
             if (val <= std.math.maxInt(u32)) return .{ .instr_ref = @enumFromInt(val) };
-            val -= std.math.maxInt(u32) + 1;
+            val -= num_u32;
 
             if (val <= std.math.maxInt(u32)) return .{ .string_ref = .{ .tag = @enumFromInt(val), .pool = undefined } };
-            val -= std.math.maxInt(u32) + 1;
+            val -= num_u32;
+
+            if (val <= std.math.maxInt(u32)) return .{ .compute_ref = .{ .tag = @enumFromInt(val)} };
+            val -= num_u32;
 
             return .{ .int = val };
         }
 
         pub fn fromInt(value: u64) ?Reference {
-            const offset_value = std.math.add(u64, value, 2 * num_u32) catch return null;
+            const offset_value = std.math.add(u64, value, 3 * num_u32) catch return null;
             return @enumFromInt(offset_value);
         }
 
@@ -53,6 +61,10 @@ pub const SLIR = struct {
 
         pub fn fromString(string: String) Reference {
             return @enumFromInt(num_u32 + @intFromEnum(string.tag));
+        }
+
+        pub fn fromCompute(compute: Compute) Reference {
+            return @enumFromInt(2*num_u32 + @intFromEnum(compute.tag));
         }
 
         pub fn fromAny(value: anytype) ?Reference {
@@ -68,6 +80,9 @@ pub const SLIR = struct {
                 },
                 String => {
                     return .fromString(value);
+                },
+                Compute => {
+                    return .fromCompute(value);
                 },
                 @import("tokenizer.zig").Token.Identifier => {
                     @compileError("To convert `Identifier` to ReferenceType, convert it in an internpool.");
@@ -86,6 +101,9 @@ pub const SLIR = struct {
                 },
                 .string_ref => |string| {
                     try writer.print("\"{f}\"", .{string});
+                },
+                .compute_ref => |compute| {
+                    try writer.print("{f}", .{compute});
                 },
                 .int => |int| {
                     try writer.print("#{d}", .{int});
@@ -158,6 +176,8 @@ pub const SLIR = struct {
 
                     decimal_integer_lit,
 
+                    type_lit,
+
                     named_value,
                     load_named_value,
 
@@ -212,10 +232,11 @@ pub const SLIR = struct {
         };
     };
 
-    pub fn init(alloc: Allocator, intern: *StringInternPool) SLIR {
+    pub fn init(alloc: Allocator, intern: *StringInternPool, computes: *ComputePool) SLIR {
         return .{
             .alloc = alloc,
             .intern = intern,
+            .computes = computes,
             .next_guid = .init,
             .functions = .empty,
         };

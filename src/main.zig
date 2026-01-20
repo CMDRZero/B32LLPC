@@ -3,6 +3,7 @@ const B32LLPC = @import("B32LLPC");
 
 const temp_ast = @import("ast.zig");
 const StringInternPool = @import("string_intern_pool.zig").StringInternPool;
+const ComputePool = @import("compute_pool.zig").ComputePool;
 
 const max_bytes = 1_000_000;
 
@@ -23,7 +24,10 @@ pub fn main(init: std.process.Init) !void {
     var intern: StringInternPool = .init(arena);
     intern.globalize();
 
-    const slir = try temp_ast.parse(arena, &intern, filetext);
+    var computes: ComputePool = .init(arena);
+    computes.globalize();
+
+    const slir = try temp_ast.parse(arena, &intern, &computes, filetext);
     std.debug.print("{f}\n", .{slir});
 
     //var root: @import("types.zig").partial.Root = .{.integer = .{.signed = false, .bits = 32}};
