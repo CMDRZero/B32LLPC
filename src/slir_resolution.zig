@@ -33,6 +33,7 @@ fn computeRef(ir: MutSLIR, target: SLIR.Reference) !void {
         const temp_goal = compute_queue.pop().?;
         const instr = getInstrByResult(ir, temp_goal).?;
         const deps = try evaluateInstruction(ir, instr) orelse continue;
+        try compute_queue.append(ir.slir.alloc, temp_goal);
         try compute_queue.ensureUnusedCapacity(ir.slir.alloc, deps.len);
         for (deps) |dep| {
             for (compute_queue.items) |item| if (dep == item) return error.cyclic;
@@ -53,7 +54,6 @@ fn evaluateInstruction(ir: MutSLIR, instr: *Instr) !?[]SLIR.Reference {
             const ref: SLIR.Reference = .fromCompute(try ir.slir.computes.convert(heap_partial));
             instr.args.items[0] = ref;
             instr.tag = .type_lit;
-            _ = try types.deepCopy(partial, ir.slir.alloc);
         },
         .type_signed_int => {
             const root = try ir.slir.alloc.create(types.partial.Root);
@@ -67,9 +67,58 @@ fn evaluateInstruction(ir: MutSLIR, instr: *Instr) !?[]SLIR.Reference {
             
         },
         .qualify_type_const => {
-            
+            const res_def = getInstrByResult(ir, instr.args.items[0]).?;
+            if (res_def.tag != .type_lit) return res_def.results.items;
+            const partial = res_def.args.items[0].toTaggedUnion().compute_ref.toItem(ir.slir.computes.*).kind;
+            const new_kind = try types.deepCopy(partial, ir.slir.alloc);
+            new_kind.data = .@"const";
+            instr.tag = .type_lit;
+            const ref: SLIR.Reference = .fromCompute(try ir.slir.computes.convert(new_kind));
+            instr.args.items[0] = ref;
         },
-        else => {},
+        .qualify_type_view => {
+            const res_def = getInstrByResult(ir, instr.args.items[0]).?;
+            if (res_def.tag != .type_lit) return res_def.results.items;
+            const partial = res_def.args.items[0].toTaggedUnion().compute_ref.toItem(ir.slir.computes.*).kind;
+            const new_kind = try types.deepCopy(partial, ir.slir.alloc);
+            new_kind.access = .@"view";
+            instr.tag = .type_lit;
+            const ref: SLIR.Reference = .fromCompute(try ir.slir.computes.convert(new_kind));
+            instr.args.items[0] = ref;
+        },
+        .type_of => {
+            const res_def: *Instr = getInstrByResult(ir, instr.args.items[0]).?;
+            switch (res_def.tag) {
+                .type_lit => {
+                    const root = try ir.slir.alloc.create(types.partial.Root);
+                    root.* = .kind;
+                    const partial: types.partial.Type = .fromRoot(root);
+                    const heap_partial = try ir.slir.alloc.create(types.partial.Type);
+                    heap_partial.* = partial;
+                    const ref: SLIR.Reference = .fromCompute(try ir.slir.computes.convert(heap_partial));
+                    instr.args.items[0] = ref;
+                    instr.tag = .type_lit;
+                },
+                .value => {
+                    instr.tag = .alias;
+                    instr.args.items[0] = res_def.args.items[1];
+                },
+                .decimal_integer_lit => {
+                    //TODO: FIX
+                    const root = try ir.slir.alloc.create(types.partial.Root);
+                    root.* = .kind;
+                    const partial: types.partial.Type = .fromRoot(root);
+                    const heap_partial = try ir.slir.alloc.create(types.partial.Type);
+                    heap_partial.* = partial;
+                    const ref: SLIR.Reference = .fromCompute(try ir.slir.computes.convert(heap_partial));
+                    instr.args.items[0] = ref;
+                    instr.tag = .type_lit;
+                },
+                //return res_def.results.items;
+                else => std.debug.panic("Bad tag `{t}` for typeof.", .{res_def.tag})
+            }
+        },
+        else => std.debug.panic("Cannot resolve instruction {}.", .{instr.*}),
     }
     return null;
 }
@@ -77,15 +126,16 @@ fn evaluateInstruction(ir: MutSLIR, instr: *Instr) !?[]SLIR.Reference {
 fn mustResolve(instr: Instr) bool {
     switch (instr.tag) {
         .type_unsigned_int,
-        .type_floating_point,
+        //.type_floating_point,
         .type_signed_int,
         .qualify_type_const,
-        .qualify_type_mut,
-        .qualify_type_var,
-        .qualify_type_view,
+        //.qualify_type_mut,
+        //.qualify_type_var,
+        //.qualify_type_view,
         //.named_value,
-        .load_named_value,
-        .ensure_is_type,
+        //.load_named_value,
+        //.ensure_is_type,
+        .type_of,
              => return true,
         else => return false,
     }
@@ -106,6 +156,9 @@ fn getInstrByResult(ir: MutSLIR, result: SLIR.Reference) ?*Instr {
             for (block.instrs.items) |*instr| {
                 for (instr.results.items) |res| {
                     if (res == result) {
+                        if (instr.tag == .alias){
+                            return getInstrByResult(ir, instr.args.items[0]);
+                        }
                         return instr;
                     }
                 }

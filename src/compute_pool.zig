@@ -64,6 +64,10 @@ pub const ComputePool = struct {
                 try writer.print("Compute_{d}", .{self.tag});
             }
         }
+
+        pub fn toItem(self: Compute, pool: ComputePool) Item {
+            return pool.array.items[@intFromEnum(self.tag)];
+        }
     };
 
     pub fn init(alloc: std.mem.Allocator) ComputePool {
