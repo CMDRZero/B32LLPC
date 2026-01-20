@@ -1,0 +1,68 @@
+const std = @import("std");
+
+const types = @import("types.zig");
+const slir = @import("slir.zig");
+const slir_cons = @import("slir_construction.zig");
+const StringInternPool = @import("string_intern_pool.zig").StringInternPool;
+
+
+const SLIR = slir.SLIR;
+const MutSLIR = slir_cons.MutSLIR;
+const String = StringInternPool.String;
+
+const Instr = SLIR.Function.Block.Instruction;
+
+pub fn resolve(ir: MutSLIR) !void {
+    var main = getFunctionByName(ir, try ir.slir.intern.convert("Main")).?;
+    try computeRef(ir, main.resT);
+}
+
+fn computeRef(ir: MutSLIR, target: SLIR.Reference) !void {
+    var compute_queue: std.ArrayList(SLIR.Reference) = .empty;
+    try compute_queue.append(ir.slir.alloc, target);
+    while (compute_queue.items.len != 0) {
+        const temp_goal = compute_queue.pop().?;
+        const instr = getInstrByResult(ir, temp_goal).?;
+        const deps = try evaluateInstruction(ir, instr) orelse continue;
+        try compute_queue.ensureUnusedCapacity(ir.slir.alloc, deps.len);
+        for (deps) |dep| {
+            for (compute_queue.items) |item| if (dep == item) return error.cyclic;
+            compute_queue.appendAssumeCapacity(dep);
+        }
+    }
+}
+
+fn evaluateInstruction(ir: MutSLIR, instr: *Instr) !?[]SLIR.Reference {
+    switch (instr.tag) {
+        .type_unsigned_int => {
+            const root = try ir.slir.alloc.create(types.partial.Root);
+            root.* = .{ .integer = .{.bits = instr.args.items[0].toTaggedUnion().int, .signed = false} };
+            const 
+        }
+    }
+    return &.{};
+}
+
+fn getFunctionByName(ir: MutSLIR, name: String) ?*SLIR.Function {
+    for (ir.slir.functions.items) |*func| {
+        if (func.name.tag == name.tag) {
+            return func;
+        }
+    }
+    return null;
+}
+
+fn getInstrByResult(ir: MutSLIR, result: SLIR.Reference) ?*Instr {
+    for (ir.slir.functions.items) |*func| {
+        for (func.blocks.items) |*block| {
+            for (block.instrs.items) |*instr| {
+                for (instr.results.items) |res| {
+                    if (res == result) {
+                        return instr;
+                    }
+                }
+            }
+        }
+    }
+    return null;
+}

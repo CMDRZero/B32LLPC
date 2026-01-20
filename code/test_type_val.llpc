@@ -1,4 +1,9 @@
-fn Main() i2 {
+fn Main() void {
     const T = u8;
-    var x: T = 2;
+    {
+        const T = u1;
+    }
+    {
+        var x: T = 2;
+    }
 }

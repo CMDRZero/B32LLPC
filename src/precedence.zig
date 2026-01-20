@@ -188,13 +188,13 @@ const precedence_group: TypeIndexArray(tokenizer.Operator.Tag, PrecClass) = b: {
     break :b groups;
 };
 
-pub fn parseExpression(state: MutSLIR) !?Reference {
+pub fn parseExpression(state: MutSLIR, resT: Reference) !?Reference {
     const save = state.getState();
-    return try parseExprPrecedence(state, .start) orelse state.restoreThrow(save);
+    return try parseExprPrecedence(state, .start, resT) orelse state.restoreThrow(save);
 }
 
-fn parseExprPrecedence(state: MutSLIR, min_exc_prec: PrecClass) !?Reference {
-    var node: Reference = try parsePrefixExpr(state) orelse return null;
+fn parseExprPrecedence(state: MutSLIR, min_exc_prec: PrecClass, resT: Reference) !?Reference {
+    var node: Reference = try parsePrefixExpr(state, resT) orelse return null;
 
     var save = state.getState();
     while (true) : (save = state.getState()) {
@@ -219,39 +219,58 @@ fn parseExprPrecedence(state: MutSLIR, min_exc_prec: PrecClass) !?Reference {
             break;
         }
 
-        const rhs = try parseExprPrecedence(state, info) orelse {
+        const rhs = try parseExprPrecedence(state, info, resT) orelse {
             return error.expected_expression;
         };
 
         const res = state.slir.getGuid();
         try state.addInstructionPoly(.{res}, .fromOperator(operator.tag), .{node, rhs});
-        node = .fromGuid(res);
+        node = try makeConstValue(state, .fromGuid(res));
     }
 
     return node;
 }
 
 //TODO: Woefully unfinished
-fn parsePrefixExpr(state: MutSLIR) !?Reference {
-    return parsePrimative(state);
+fn parsePrefixExpr(state: MutSLIR, resT: Reference) !?Reference {
+    return parsePrimative(state, resT);
 }
 
-fn parsePrimative(state: MutSLIR) !?Reference {
+//TODO: Woefully unfinished
+fn parsePrimative(state: MutSLIR, resT: Reference) !?Reference {
+    _ = resT;
     const token = state.popToken();
-    switch (token) {
-        .kind => |kind| {
+    const value: Reference = switch (token) {
+        .kind => |kind| ret: {
             const res = state.slir.getGuid();
             try state.addInstructionPoly(.{res}, .fromKindTag(kind.tag), .{kind.bits});
-            return .fromGuid(res);
+            break :ret .fromGuid(res);
         },
-        .literal => |lit| switch (lit.tag) {
+        .literal => |lit| ret: { switch (lit.tag) {
             .dec_int => |str| {
                 const res = state.slir.getGuid();
                 try state.addInstructionPoly(.{res}, .decimal_integer_lit, .{try state.slir.intern.convert(str)});
-                return .fromGuid(res);
+                break :ret .fromGuid(res);
             },
             else => @panic("TODO"),
-        },
+        }},
         else => @panic("TODO"),
-    }
+    };
+
+    return try makeConstValue(state, value);
+}
+
+fn makeConstValue(state: MutSLIR, value: Reference) !Reference {
+    var kind = state.slir.getGuid();
+    try state.addInstructionPoly(.{kind}, .type_of, .{value});
+    var new_kind = state.slir.getGuid();
+    try state.addInstructionPoly(.{new_kind}, .qualify_type_const, .{kind});
+
+    kind = new_kind;
+    new_kind = state.slir.getGuid();
+    try state.addInstructionPoly(.{new_kind}, .qualify_type_view, .{kind});
+
+    const stored_value = state.slir.getGuid();
+    try state.addInstructionPoly(.{stored_value}, .value, .{ value, new_kind });   
+    return .fromGuid(stored_value);
 }

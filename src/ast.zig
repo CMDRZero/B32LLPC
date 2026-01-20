@@ -2,6 +2,7 @@ const std = @import("std");
 
 const precedence = @import("precedence.zig");
 const slir = @import("slir.zig");
+const slir_res = @import("slir_resolution.zig");
 const SLIR = slir.SLIR;
 const Guid = SLIR.Guid;
 const Reference = SLIR.Reference;
@@ -26,6 +27,7 @@ pub fn parse(alloc: std.mem.Allocator, intern: *StringInternPool, file: []u8) !S
     while (state.source_file.len > 0) {
         try parseFunction(&state) orelse return error.expected_function;
     }
+    try slir_res.resolve(&state);
     return state.slir;
 }
 
@@ -62,13 +64,16 @@ pub fn parseFunction(state: MutSLIR) !?void {
     try state.expectSymbol(.@"{");
     try state.slir.openScope();
     try state.slir.createEntry();
-    try state.slir.appendBlock(try state.slir.intern.convert("Test_0"));
-    try state.slir.openScope();
-    try state.slir.appendBlock(try state.slir.intern.convert("Test_1"));
-    try state.slir.appendBlock(try state.slir.intern.convert("Test_2"));
-    try state.slir.appendBlock(try state.slir.intern.convert("Test_3"));
-    try state.slir.closeScope();
-    try state.slir.appendBlock(try state.slir.intern.convert("Test_4"));
+
+    ////Testing begin
+    // try state.slir.appendBlock(try state.slir.intern.convert("Test_0"));
+    // try state.slir.openScope();
+    // try state.slir.appendBlock(try state.slir.intern.convert("Test_1"));
+    // try state.slir.appendBlock(try state.slir.intern.convert("Test_2"));
+    // try state.slir.appendBlock(try state.slir.intern.convert("Test_3"));
+    // try state.slir.closeScope();
+    // try state.slir.appendBlock(try state.slir.intern.convert("Test_4"));
+    ////Testing end
 
     while (!state.eatSymbol(.@"}")) {
         try parseStatement(state) orelse return error.expected_statement;
@@ -170,6 +175,23 @@ fn parseTypePrimative(state: MutSLIR) !?Guid {
 
 fn parseStatement(state: MutSLIR) !?void {
     const save = state.getState();
+    if (state.eatSymbol(.@"{")) {
+        try state.slir.openScope();
+        try state.slir.appendBlock(null);
+        while (true) {
+            const stmt = try parseStatement(state);
+            if (stmt == null) break;
+        }
+        try state.expectSymbol(.@"}");
+        try state.slir.closeScope();
+        try state.slir.appendBlock(null);
+    } else {
+        return try parseDeclStatement(state) orelse state.restoreThrow(save);
+    }
+}
+
+fn parseDeclStatement(state: MutSLIR) !?void {
+    const save = state.getState();
     if (state.eatSymbol(.@"const")) {
         const var_decl = try parseVariableDecl(state) orelse return error.expected_variable_declaration;
 
@@ -182,7 +204,7 @@ fn parseStatement(state: MutSLIR) !?void {
         try state.addInstructionPoly(.{new_kind}, .qualify_type_view, .{kind});
 
         const stored_value = state.slir.getGuid();
-        try state.addInstructionPoly(.{stored_value}, .value, .{ var_decl.value, var_decl.kind });
+        try state.addInstructionPoly(.{stored_value}, .value, .{ var_decl.value, new_kind });
         try state.addInstructionPoly(.{}, .named_value, .{ var_decl.name, stored_value });
     } else if (state.eatSymbol(.@"var")) {
         const var_decl = try parseVariableDecl(state) orelse return error.expected_variable_declaration;
@@ -196,7 +218,7 @@ fn parseStatement(state: MutSLIR) !?void {
         try state.addInstructionPoly(.{new_kind}, .qualify_type_mut, .{kind});
 
         const stored_value = state.slir.getGuid();
-        try state.addInstructionPoly(.{stored_value}, .value, .{ var_decl.value, var_decl.kind });
+        try state.addInstructionPoly(.{stored_value}, .value, .{ var_decl.value, new_kind });
         try state.addInstructionPoly(.{}, .named_value, .{ var_decl.name, stored_value });
     } else if (state.eatSymbol(.@"volatile")) {
         return error.unimplemented;
@@ -215,7 +237,7 @@ fn parseVariableDecl(state: MutSLIR) !?VarDecl {
     const kind, const didInfer = if (state.eatSymbol(.@":")) (.{ try parseType(state) orelse return error.expected_type, false }) else (.{ state.slir.getGuid(), true });
     try state.expectSymbol(.@"=");
 
-    const expr_value = try parseExpression(state);
+    const expr_value = try parseExpression(state, .fromGuid(kind));
 
     if (didInfer) {
         try state.addInstructionPoly(.{kind}, .type_of, .{expr_value});
@@ -225,6 +247,6 @@ fn parseVariableDecl(state: MutSLIR) !?VarDecl {
 }
 
 //TODO: Add support for result type inference
-fn parseExpression(state: MutSLIR) !Reference {
-    return try precedence.parseExpression(state) orelse error.expected_expression;
+fn parseExpression(state: MutSLIR, resT: Reference) !Reference {
+    return try precedence.parseExpression(state, resT) orelse error.expected_expression;
 }

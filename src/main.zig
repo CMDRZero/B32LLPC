@@ -24,5 +24,8 @@ pub fn main(init: std.process.Init) !void {
     intern.globalize();
 
     const slir = try temp_ast.parse(arena, &intern, filetext);
-    std.debug.print("{f}", .{slir});
+    std.debug.print("{f}\n", .{slir});
+
+    //var root: @import("types.zig").partial.Root = .{.integer = .{.signed = false, .bits = 32}};
+    //std.debug.print("{f}\n", .{@import("types.zig").partial.Type.fromRoot(&root)});
 }
