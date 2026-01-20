@@ -28,6 +28,7 @@ pub fn parse(alloc: std.mem.Allocator, intern: *StringInternPool, computes: *Com
     while (state.source_file.len > 0) {
         try parseFunction(&state) orelse return error.expected_function;
     }
+    std.debug.print("{f}\n", .{state.slir});
     try slir_res.resolve(&state);
     return state.slir;
 }

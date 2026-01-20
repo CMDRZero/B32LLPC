@@ -30,6 +30,8 @@ pub fn main(init: std.process.Init) !void {
     const slir = try temp_ast.parse(arena, &intern, &computes, filetext);
     std.debug.print("{f}\n", .{slir});
 
-    //var root: @import("types.zig").partial.Root = .{.integer = .{.signed = false, .bits = 32}};
-    //std.debug.print("{f}\n", .{@import("types.zig").partial.Type.fromRoot(&root)});
+    // var root: @import("types.zig").partial.Root = .{.integer = .{.signed = false, .bits = 32, .low = (try std.math.big.int.Managed.initSet(arena, 1)).toMutable()}};
+    // const kind = @import("types.zig").partial.Type.fromRoot(&root);
+    // std.debug.print("{f}\n", .{kind});
+    // _ = try @import("types.zig").deepCopy(@as(?std.mem.Allocator, arena), arena);
 }

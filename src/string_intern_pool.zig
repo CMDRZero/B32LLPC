@@ -23,6 +23,10 @@ pub const StringInternPool = struct {
                 try writer.print("String_{}", .{@intFromEnum(self.tag)});
             }
         }
+
+        pub fn toStr(self: String, pool: StringInternPool) []const u8 {
+            return pool.array.items[@intFromEnum(self.tag)];
+        }
     };
 
     pub fn init(alloc: std.mem.Allocator) StringInternPool {

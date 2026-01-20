@@ -104,9 +104,16 @@ fn evaluateInstruction(ir: MutSLIR, instr: *Instr) !?[]SLIR.Reference {
                     instr.args.items[0] = res_def.args.items[1];
                 },
                 .decimal_integer_lit => {
-                    //TODO: FIX
+                    return res_def.results.items;
+                },
+                .int_lit => {
                     const root = try ir.slir.alloc.create(types.partial.Root);
-                    root.* = .kind;
+                    const val: std.math.big.int.Mutable = switch (res_def.args.items[0].toTaggedUnion().compute_ref.toItem(ir.slir.computes.*)) {
+                        .int_small => |x| (try std.math.big.int.Managed.initSet(ir.slir.alloc, x)).toMutable(),
+                        .int_big => |x| x.toMutable(),
+                        else => unreachable,
+                    };
+                    root.* = .{ .integer = .{.bits = null, .signed = false, .low = val, .high = val} };
                     const partial: types.partial.Type = .fromRoot(root);
                     const heap_partial = try ir.slir.alloc.create(types.partial.Type);
                     heap_partial.* = partial;
@@ -117,6 +124,30 @@ fn evaluateInstruction(ir: MutSLIR, instr: *Instr) !?[]SLIR.Reference {
                 //return res_def.results.items;
                 else => std.debug.panic("Bad tag `{t}` for typeof.", .{res_def.tag})
             }
+        },
+        .decimal_integer_lit => {
+            var int: std.math.big.int.Managed = try .initSet(ir.slir.alloc, 0);
+            const str = instr.args.items[0].toTaggedUnion().string_ref.toStr(ir.slir.intern.*);
+            var temp: std.math.big.int.Managed = try .init(ir.slir.alloc);
+            for (0..str.len) |i| {
+                const c = str[str.len - 1 - i];
+                switch (c) {
+                    '0'...'9' => |x_| {
+                        try temp.set(10);
+                        try int.mul(&int, &temp);
+                        try temp.set(x_ - '0');
+                        try int.add(&int, &temp);
+                    },
+                    '_' => {},
+                    else => std.debug.print("Bad symbol in intger `{c}`", .{c}),
+                }
+            }
+            if (int.toInt(usize)) |x| {
+                instr.args.items[0] = .fromCompute(try ir.slir.computes.convert(x));
+            } else |_| {
+                instr.args.items[0] = .fromCompute(try ir.slir.computes.convert(try types.deepCopy(&int, ir.slir.alloc)));
+            }
+            instr.tag = .int_lit;
         },
         else => std.debug.panic("Cannot resolve instruction {}.", .{instr.*}),
     }
@@ -131,7 +162,7 @@ fn mustResolve(instr: Instr) bool {
         .qualify_type_const,
         //.qualify_type_mut,
         //.qualify_type_var,
-        //.qualify_type_view,
+        .qualify_type_view,
         //.named_value,
         //.load_named_value,
         //.ensure_is_type,

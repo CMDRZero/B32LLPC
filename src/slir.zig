@@ -176,6 +176,7 @@ pub const SLIR = struct {
 
                     decimal_integer_lit,
 
+                    int_lit,
                     type_lit,
 
                     named_value,

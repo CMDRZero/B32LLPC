@@ -7,14 +7,20 @@ pub const ComputePool = struct {
     alloc: std.mem.Allocator,
     array: std.ArrayList(Item),
 
+    const BigInt = std.math.big.int.Managed;
+
     pub const Item = union (enum) {
         int_small: usize,
+        int_big: *BigInt,
         kind: *types.partial.Type,
 
         pub fn format(self: Item, writer: *std.Io.Writer) !void {
             switch (self) {
                 .int_small => |val| {
                     try writer.print("cs#{d}", .{val});
+                },
+                .int_big => |val| {
+                    try writer.print("cb#{f}", .{val.*});
                 },
                 .kind => |partial| {
                     try writer.print("Type({f})", .{partial.*});
@@ -29,6 +35,10 @@ pub const ComputePool = struct {
                     const o_int = other.int_small;
                     return s_int == o_int;
                 },
+                .int_big => |s_int| {
+                    const o_int = other.int_big;
+                    return s_int.eql(o_int.*);
+                },
                 .kind => |s_type| {
                     const o_type = other.kind;
                     return s_type.eqls(o_type.*);
@@ -40,6 +50,10 @@ pub const ComputePool = struct {
             return switch (@TypeOf(value)) {
                 usize => .{
                     .int_small = value,
+                },
+                BigInt => @compileError("Must take reference to partial BigInt."),
+                *BigInt => .{
+                    .int_big = value,
                 },
                 types.partial.Type => @compileError("Must take reference of partial Type."),
                 *types.partial.Type => .{
