@@ -1,5 +1,7 @@
 const std = @import("std");
 
+var global_type_display_mode: enum {verbose, minimal} = .minimal;
+
 pub const qualifier = struct {
     pub const Access = enum {
         view,
@@ -13,25 +15,62 @@ pub const qualifier = struct {
     };
 };
 
-pub const Alignment = usize;
+pub const Alignment = u6;
 
 pub const partial = struct {
     pub const Type = struct {
         access: ?qualifier.Access = null,
         data: ?qualifier.Data = null,
-        bitalign: Alignment,
         isPinned: bool = false,
+        
+        bitalign: Alignment,    //Always power of two (or 0) in range [0..32]
+        pack_as: usize,         //Must be greater than or equal to the logical size
+        
         aggregate: Aggregate,
 
         pub fn fromRoot(root: *Root) Type {
             const aggr: Aggregate = .{ .root = root };
             return .{
                 .aggregate = aggr,
-                .bitalign = root.bitalign(),
+                .bitalign = alignOf(root.bitsize()),
+                .pack_as = logicalSize(root.bitsize()),
             };
         }
 
         pub fn format(self: Type, writer: *std.Io.Writer) !void {
+            switch (global_type_display_mode) {
+                .minimal => try self.formatMinimal(writer),
+                .verbose => try self.formatExplicit(writer),
+            }
+        }
+
+        pub fn formatMinimal(self: Type, writer: *std.Io.Writer) !void {
+            if (self.access) |access| {
+                if (access != .view) try writer.print("{t} ", .{access});
+            } else {
+                try writer.print("_ ", .{});
+            }
+
+            if (self.data) |data| {
+                if (data != .@"var") try writer.print("{t} ", .{data});
+            } else {
+                try writer.print("_ ", .{});
+            }
+
+            if (self.bitsize() != 0) {
+                if (logicalSize(self.bitsize()) != self.bitalign) try writer.print("stride({}) ", .{self.pack_as});
+
+                if (alignOf(self.bitsize()) != self.bitalign) try writer.print("bitalign({}) ", .{self.bitalign});
+            }
+
+            if (self.isPinned) {
+                try writer.print("pinned ", .{});
+            }
+
+            try writer.print("{f}", .{self.aggregate});
+        }
+
+        pub fn formatExplicit(self: Type, writer: *std.Io.Writer) !void {
             if (self.access) |access| {
                 try writer.print("{t} ", .{access});
             } else {
@@ -44,7 +83,11 @@ pub const partial = struct {
                 try writer.print("any_variability ", .{});
             }
 
+            try writer.print("stride({}) ", .{self.pack_as});
+
             try writer.print("bitalign({}) ", .{self.bitalign});
+
+            try writer.print("bitsize({}) ", .{self.bitsize()});
 
             if (self.isPinned) {
                 try writer.print("pinned ", .{});
@@ -59,6 +102,10 @@ pub const partial = struct {
             if (self.bitalign != other.bitalign) return false;
             if (self.isPinned != other.isPinned) return false;
             return self.aggregate.eqls(other.aggregate);
+        }
+
+        pub fn bitsize(self: Type) usize {
+            return self.aggregate.bitsize();
         }
     };
 
@@ -80,56 +127,108 @@ pub const partial = struct {
                 }
             }
         }
+
+        pub fn bitsize(self: Aggregate) usize {
+            return switch (self) {
+                .root => |root| root.bitsize(),
+            };
+        }
     };
 
     pub const Root = union (enum) {
-        integer: struct {
-            signed: bool,
-            bits: ?usize,
-            low: ?std.math.big.int.Mutable = null,
-            high: ?std.math.big.int.Mutable = null,
-        },
+        integer: Integer,
         kind: void,
 
-        fn bitalign(self: Root) usize {
-            switch (self) {
-                .integer => |int| {
-                    if (int.bits) |bits| {
-                        return alignFromBitSize(bits);
-                    } else {
-                        // if (int.low) |low| if (int.high) |high| {
-                        //     const bits = low.len
-                        //     return alignFromBitSize(bits);
-                        // };
-                        return 0;
-                    }
+        pub const Integer = struct {
+            backing: union (enum) {
+                explicit: Impl,
+                implicit: ?Impl,
+            },
+            low: ?std.math.big.int.Mutable = null,
+            high: ?std.math.big.int.Mutable = null,
+
+            pub const Impl = struct {
+                signed: bool,
+                bits: usize
+            };
+        };
+
+        pub const MakeIntegerBacking = union (enum) {
+            explicit: Integer.Impl, 
+            implicit
+        };
+
+        /// The integer created owns the low and high bounds if supplied
+        pub fn makeInteger(
+            backing: MakeIntegerBacking,
+            alloc: ?std.mem.Allocator,
+            defaults: struct {
+                low: ?std.math.big.int.Mutable = null,
+                high: ?std.math.big.int.Mutable = null,
+        }) !Root {
+            switch (backing) {
+                .explicit => |impl| {
+                    return .{ .integer = .{
+                        .backing = .{ .explicit = impl },
+                        .low = defaults.low,
+                        .high = defaults.high,
+                    } };
                 },
-                .kind => {
-                    return 0;
+                .implicit => {
+                    if (defaults.low) |low| if (defaults.high) |high| {
+                        const lowbits = try bitcountSigned(try refDeepCopy(low, alloc.?), alloc.?);
+                        const highbits = try bitcountSigned(try refDeepCopy(high, alloc.?), alloc.?);
+                        const bits = @max(lowbits, highbits);
+                        const signed = !low.positive and !low.eqlZero(); //If the low isnt negative the high cannot be
+                        return .{ .integer = .{
+                            .backing = .{ .implicit = .{.bits = bits, .signed = signed} },
+                            .low = defaults.low,
+                            .high = defaults.high,
+                        } };
+                    };
+                    return .{ .integer = .{
+                        .backing = .{ .implicit = null },
+                        .low = defaults.low,
+                        .high = defaults.high,
+                    } };
                 }
             }
-            unreachable;
+        }
+
+        fn bitsize(self: Root) usize {
+            switch (self) {
+                .integer => |int| switch (int.backing) {
+                    .explicit => |impl| {
+                        return impl.bits;
+                    },
+                    .implicit => |q_impl| {
+                        return (q_impl orelse return 0).bits;
+                    }
+                },
+                .kind => return 0,
+            }
         }
 
         pub fn format(self: Root, writer: *std.Io.Writer) !void {
             switch (self) {
-                .integer => |int| {
-                    if (int.bits) |bits| {
-                        if (int.signed) {
+                .integer => |int| switch (int.backing) {
+                    .explicit => |impl| {
+                        if (impl.signed) {
                             try writer.print("i", .{});
                         } else {
                             try writer.print("u", .{});
                         }
-                        try writer.print("{}", .{bits});
-                    } else {
+                        try writer.print("{}", .{impl.bits});
+                    },
+                    .implicit => {
                         try writer.print("int", .{});
-                    }
-                    if (int.low != null or int.high != null) {
-                        try writer.print("[", .{});
-                        if (int.low) |low| try writer.print("{f}", .{low});
-                        try writer.print("..", .{});
-                        if (int.high) |high| try writer.print("{f}", .{high});
-                        try writer.print("]", .{});
+                        if (int.low != null or int.high != null) {
+                            try writer.print("[", .{});
+                            if (int.low) |low| try writer.print("{f}", .{low});
+                            try writer.print("..", .{});
+                            if (int.high) |high| try writer.print("{f}", .{high});
+                            try writer.print("]", .{});
+                        }
                     }
                 },
                 .kind => try writer.print("type", .{}),
@@ -142,7 +241,27 @@ pub const partial = struct {
     };
 };
 
-fn log2(int: *std.math.big.int.Mutable, alloc: std.mem.Allocator) !usize {
+/// Returns the minimum number of bits to represent this number. 
+/// If the number is posative its bits in an unsigned int
+/// If the number is negative its bits in a signed int
+/// Returns 0 if supplied 0
+/// Clobbers `int`
+fn bitcountSigned(int: *std.math.big.int.Mutable, alloc: std.mem.Allocator) !usize {
+    if (int.eqlZero()) return 0;
+    if (int.positive) return bitcount(int, alloc);
+    int.addScalar(int.toConst(), 1); //Might cause failures but I'm lazy so lets hope it doesnt
+    int.negate();
+    return bitcount(int, alloc);
+}
+
+/// Returns the minimum number of bits to represent this number
+/// bitcount(0b1) == 1; bitcount(0b100) == 3
+/// returns 0 bits if given 0
+/// Equivilent to `len(bin(x)][2:])` in python if x > 0
+/// Clobbers `int`
+fn bitcount(int: *std.math.big.int.Mutable, alloc: std.mem.Allocator) !usize {
+    std.debug.assert(int.positive);
+    if (int.eqlZero()) return 0;
     var ret: usize = 0;
     const Limb = std.math.big.Limb;
     const copy_limbs = try alloc.dupe(Limb, int.limbs);
@@ -163,17 +282,26 @@ fn log2(int: *std.math.big.int.Mutable, alloc: std.mem.Allocator) !usize {
     return ret;
 }
 
-test "log2" {
+test "bitcount" {
     var int: std.math.big.int.Managed = try .initSet(std.testing.allocator, 16);
     var mut = int.toMutable();
-    try std.testing.expectEqual(4, log2(&mut, std.testing.allocator));
+    try std.testing.expectEqual(5, bitcount(&mut, std.testing.allocator));
     int = try .initSet(std.testing.allocator, 33);
     mut = int.toMutable();
-    try std.testing.expectEqual(6, log2(&mut, std.testing.allocator));
-    
+    try std.testing.expectEqual(6, bitcount(&mut, std.testing.allocator));
 }
 
-fn alignFromBitSize(bits: usize) usize {
+fn alignOf(bits: usize) u6 {
+    if (bits == 0) {
+        return 0;
+    } else if (bits < 32) {
+        return std.math.ceilPowerOfTwo(u6, @intCast(bits)) catch unreachable;
+    } else {
+        return 32;
+    }
+}
+
+fn logicalSize(bits: usize) usize {
     if (bits == 0) {
         return 0;
     } else if (bits < 32) {
@@ -181,6 +309,10 @@ fn alignFromBitSize(bits: usize) usize {
     } else {
         return 32 * (std.math.divCeil(usize, bits, 32) catch unreachable);
     }
+}
+
+pub fn refDeepCopy(object: anytype, alloc: std.mem.Allocator) !*@TypeOf(object) {
+    return try deepCopy(@constCast(&object), alloc);
 }
 
 pub fn deepCopy(object: anytype, alloc: std.mem.Allocator) !@TypeOf(object) {

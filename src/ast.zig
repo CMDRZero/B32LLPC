@@ -111,7 +111,10 @@ fn parseTypeCopyQualifier(state: MutSLIR) !?Guid {
 fn parseTypeDataQualifier(state: MutSLIR) !?Guid {
     const save = state.getState();
     if (state.eatSymbol(.@"const")) {
-        return error.unimplemented;
+        const aggr = try parseTypeAggregate(state) orelse return state.restoreThrow(save);
+        const quafed = state.slir.getGuid();
+        try state.addInstructionPoly(.{quafed}, .qualify_type_const, .{aggr});
+        return quafed;
     } else if (state.eatSymbol(.@"var")) {
         return error.unimplemented;
     } else if (state.eatSymbol(.@"volatile")) {
@@ -168,9 +171,9 @@ fn parseTypePrimative(state: MutSLIR) !?Guid {
         },
         .identifier => |id| {
             try state.addInstructionPoly(.{guid}, .load_named_value, .{id});
-            const throw_away_guid = state.slir.getGuid();
-            try state.addInstructionPoly(.{throw_away_guid}, .ensure_is_type, .{guid});
-            return guid;
+            const as_type = state.slir.getGuid();
+            try state.addInstructionPoly(.{as_type}, .ensure_is_type, .{guid});
+            return as_type;
         },
         else => return state.restoreThrow(save),
     }
@@ -206,8 +209,11 @@ fn parseDeclStatement(state: MutSLIR) !?void {
         new_kind = state.slir.getGuid();
         try state.addInstructionPoly(.{new_kind}, .qualify_type_view, .{kind});
 
+        const cast_value = state.slir.getGuid();
+        try state.addInstructionPoly(.{cast_value}, .ensure_cast, .{ var_decl.value, new_kind });
+        
         const stored_value = state.slir.getGuid();
-        try state.addInstructionPoly(.{stored_value}, .value, .{ var_decl.value, new_kind });
+        try state.addInstructionPoly(.{stored_value}, .value, .{ cast_value, new_kind });
         try state.addInstructionPoly(.{}, .named_value, .{ var_decl.name, stored_value });
     } else if (state.eatSymbol(.@"var")) {
         const var_decl = try parseVariableDecl(state) orelse return error.expected_variable_declaration;

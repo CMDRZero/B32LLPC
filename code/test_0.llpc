@@ -1,4 +1,4 @@
-fn Main() void {
+fn Main() i2 {
     const z = 1 + 2 * 3 * 4;
     const z_: u4 = 1 + 2;
     const T = u8[0..5];

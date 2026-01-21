@@ -164,6 +164,7 @@ pub const SLIR = struct {
                     type_of,
 
                     ensure_is_type,
+                    ensure_cast,
 
                     qualify_type_const,
                     qualify_type_var,

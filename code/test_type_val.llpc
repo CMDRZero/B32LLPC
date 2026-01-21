@@ -1,9 +1,10 @@
 fn Main() void {
+    const nofit: u1 = 5;
     const T = u8;
     {
         const T = u1;
     }
     {
-        var x: T = 2;
+        var x: T = 127;
     }
 }
