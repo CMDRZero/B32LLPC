@@ -3,6 +3,7 @@ const ArrayList = std.ArrayList;
 const mem = std.mem;
 const Allocator = mem.Allocator;
 
+const source_display = @import("source_display.zig");
 const ComputePool = @import("compute_pool.zig").ComputePool;
 const Compute = ComputePool.Compute;
 const StringInternPool = @import("string_intern_pool.zig").StringInternPool;
@@ -118,7 +119,12 @@ pub const SLIR = struct {
     };
     
     pub const Span = struct {
-        slice: []u8
+        slice: []u8,
+
+        pub fn format(self: Span, writer: *std.Io.Writer) !void {
+            const print_span: source_display.State.Span = .fromSlice(self.slice);
+            try writer.print("{f}", .{print_span});
+        }
     };
 
     pub const Function = struct {
@@ -220,20 +226,30 @@ pub const SLIR = struct {
                 };
 
                 pub fn format(self: Instruction, writer: *std.Io.Writer) !void {
+                    var buf: [1024]u8 = undefined;
+                    var buf_writer: std.Io.Writer.Allocating = .initOwnedSlice(std.mem.Allocator.failing, &buf);
+                    var bwriter = &buf_writer.writer;
+
                     if (self.results.items.len >= 1) {
-                        try writer.print("{f}", .{self.results.items[0]});
+                        try bwriter.print("{f}", .{self.results.items[0]});
                         for (self.results.items[1..]) |result| {
-                            try writer.print(", {f}", .{result});
+                            try bwriter.print(", {f}", .{result});
                         }
-                        try writer.print(" = ", .{});
+                        try bwriter.print(" = ", .{});
                     }
-                    try writer.print("{t}", .{self.tag});
+                    try bwriter.print("{t}", .{self.tag});
                     if (self.args.items.len >= 1) {
-                        try writer.print(" {f}", .{self.args.items[0]});
+                        try bwriter.print(" {f}", .{self.args.items[0]});
                         for (self.args.items[1..]) |arg| {
-                            try writer.print(", {f}", .{arg});
+                            try bwriter.print(", {f}", .{arg});
                         }
                     }
+                    const written = buf_writer.written();
+                    try writer.print("{s}", .{written});
+                    if (written.len < 70) {
+                        try writer.splatByteAll(' ', 70 - written.len);
+                    }
+                    try writer.print(" Span: {f}", .{self.span});
                 }
             };
         };
