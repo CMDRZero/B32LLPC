@@ -1,16 +1,17 @@
 const std = @import("std");
+
+const ast = @import("ast.zig");
+const MutSLIR = @import("slir_construction.zig").MutSLIR;
+const slir = @import("slir.zig");
+const SLIR = slir.SLIR;
+const Guid = SLIR.Guid;
+const Reference = SLIR.Reference;
+const StringInternPool = @import("string_intern_pool.zig").StringInternPool;
+const tokenizer = @import("tokenizer.zig");
+const Token = tokenizer.Token;
 const type_indexed_array = @import("type_indexed_array.zig");
 const TypeIndexArrayPointer = type_indexed_array.TypeIndexArrayPointer;
 const TypeIndexArray = type_indexed_array.TypeIndexArray;
-const tokenizer = @import("tokenizer.zig");
-const slir = @import("slir.zig");
-const SLIR = slir.SLIR;
-const MutSLIR = @import("slir_construction.zig").MutSLIR;
-const Token = tokenizer.Token;
-const StringInternPool = @import("string_intern_pool.zig").StringInternPool;
-const Guid = SLIR.Guid;
-const Reference = SLIR.Reference;
-const ast = @import("ast.zig");
 
 pub const PrecClass = struct {
     group: Group,
@@ -68,7 +69,7 @@ pub const PrecClass = struct {
                 .exhaustive,
                 major_names,
                 &values,
-            ); 
+            );
         };
     };
 
@@ -157,34 +158,34 @@ pub const PrecClass = struct {
 
 const precedence_group: TypeIndexArray(tokenizer.Operator.Tag, PrecClass) = b: {
     var groups: TypeIndexArray(tokenizer.Operator.Tag, PrecClass) = undefined;
-    groups.set(.@"+", .{.group = .arithmetic_sum});
-    groups.set(.@"-", .{.group = .arithmetic_sum});
-    groups.set(.@"*", .{.group = .arithmetic_product_chainable});
-    groups.set(.@"%", .{.group = .arithmetic_product_nonchainable, .assoc = .none});
-    groups.set(.@"/", .{.group = .arithmetic_product_chainable});
-    
-    groups.set(.@"<<", .{.group = .bitwise_shift});
-    groups.set(.@">>", .{.group = .bitwise_shift});
-    
-    groups.set(.@"&", .{.group = .bitwise_product});
-    groups.set(.@"&~", .{.group = .bitwise_product});
-    groups.set(.@"^", .{.group = .bitwise_xor});
-    groups.set(.@"^~", .{.group = .bitwise_xor});
-    groups.set(.@"|", .{.group = .bitwise_sum});
-    groups.set(.@"|~", .{.group = .bitwise_sum});
-    
-    groups.set(.@"orelse", .{.group = .coercion});
-    
-    groups.set(.@"==", .{.group = .comparison, .assoc = .none});
-    groups.set(.@"!=", .{.group = .comparison, .assoc = .none});
-    groups.set(.@"<", .{.group = .comparison, .assoc = .none});
-    groups.set(.@">", .{.group = .comparison, .assoc = .none});
-    groups.set(.@"<=", .{.group = .comparison, .assoc = .none});
-    groups.set(.@">", .{.group = .comparison, .assoc = .none});
-    
-    groups.set(.@"and", .{.group = .logical_product});
-    groups.set(.@"or", .{.group = .logical_sum});
-    
+    groups.set(.@"+", .{ .group = .arithmetic_sum });
+    groups.set(.@"-", .{ .group = .arithmetic_sum });
+    groups.set(.@"*", .{ .group = .arithmetic_product_chainable });
+    groups.set(.@"%", .{ .group = .arithmetic_product_nonchainable, .assoc = .none });
+    groups.set(.@"/", .{ .group = .arithmetic_product_chainable });
+
+    groups.set(.@"<<", .{ .group = .bitwise_shift });
+    groups.set(.@">>", .{ .group = .bitwise_shift });
+
+    groups.set(.@"&", .{ .group = .bitwise_product });
+    groups.set(.@"&~", .{ .group = .bitwise_product });
+    groups.set(.@"^", .{ .group = .bitwise_xor });
+    groups.set(.@"^~", .{ .group = .bitwise_xor });
+    groups.set(.@"|", .{ .group = .bitwise_sum });
+    groups.set(.@"|~", .{ .group = .bitwise_sum });
+
+    groups.set(.@"orelse", .{ .group = .coercion });
+
+    groups.set(.@"==", .{ .group = .comparison, .assoc = .none });
+    groups.set(.@"!=", .{ .group = .comparison, .assoc = .none });
+    groups.set(.@"<", .{ .group = .comparison, .assoc = .none });
+    groups.set(.@">", .{ .group = .comparison, .assoc = .none });
+    groups.set(.@"<=", .{ .group = .comparison, .assoc = .none });
+    groups.set(.@">", .{ .group = .comparison, .assoc = .none });
+
+    groups.set(.@"and", .{ .group = .logical_product });
+    groups.set(.@"or", .{ .group = .logical_sum });
+
     break :b groups;
 };
 
@@ -224,7 +225,7 @@ fn parseExprPrecedence(state: MutSLIR, min_exc_prec: PrecClass, resT: Reference)
         };
 
         const res = state.slir.getGuid();
-        try state.addInstructionPoly(.{res}, .fromOperator(operator.tag), .{node, rhs});
+        try state.addInstructionPoly(.{res}, .fromOperator(operator.tag), .{ node, rhs });
         node = try makeConstValue(state, .fromGuid(res));
     }
 
@@ -246,14 +247,16 @@ fn parsePrimative(state: MutSLIR, resT: Reference) !?Reference {
             try state.addInstructionPoly(.{res}, .fromKindTag(kind.tag), .{kind.bits});
             break :ret .fromGuid(res);
         },
-        .literal => |lit| ret: { switch (lit.tag) {
-            .dec_int => |str| {
-                const res = state.slir.getGuid();
-                try state.addInstructionPoly(.{res}, .decimal_integer_lit, .{try state.slir.intern.convert(str)});
-                break :ret .fromGuid(res);
-            },
-            else => @panic("TODO"),
-        }},
+        .literal => |lit| ret: {
+            switch (lit.tag) {
+                .dec_int => |str| {
+                    const res = state.slir.getGuid();
+                    try state.addInstructionPoly(.{res}, .op_decimal_integer_lit, .{try state.slir.intern.convert(str)});
+                    break :ret .fromGuid(res);
+                },
+                else => @panic("TODO"),
+            }
+        },
         else => @panic("TODO"),
     };
 
@@ -262,7 +265,7 @@ fn parsePrimative(state: MutSLIR, resT: Reference) !?Reference {
 
 fn makeConstValue(state: MutSLIR, value: Reference) !Reference {
     var kind = state.slir.getGuid();
-    try state.addInstructionPoly(.{kind}, .type_of, .{value});
+    try state.addInstructionPoly(.{kind}, .op_type_of, .{value});
     var new_kind = state.slir.getGuid();
     try state.addInstructionPoly(.{new_kind}, .qualify_type_const, .{kind});
 
@@ -271,6 +274,6 @@ fn makeConstValue(state: MutSLIR, value: Reference) !Reference {
     try state.addInstructionPoly(.{new_kind}, .qualify_type_view, .{kind});
 
     const stored_value = state.slir.getGuid();
-    try state.addInstructionPoly(.{stored_value}, .value, .{ value, new_kind });   
+    try state.addInstructionPoly(.{stored_value}, .struct_value, .{ value, new_kind });
     return .fromGuid(stored_value);
 }

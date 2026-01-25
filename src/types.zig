@@ -4,14 +4,22 @@ var global_type_display_mode: enum {verbose, minimal} = .minimal;
 
 pub const qualifier = struct {
     pub const Access = enum {
-        view,
         mut,
+        view,
+
+        pub fn isSubset(lhs: Access, rhs: Access) bool {
+            return @intFromEnum(lhs) <= @intFromEnum(rhs);
+        }
     };
 
     pub const Data = enum {
         @"const",
         @"var",
         @"volatile",
+
+        pub fn isSubset(lhs: Data, rhs: Data) bool {
+            return @intFromEnum(lhs) <= @intFromEnum(rhs);
+        }
     };
 };
 

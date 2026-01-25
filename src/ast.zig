@@ -1,17 +1,17 @@
 const std = @import("std");
 
+const ComputePool = @import("compute_pool.zig").ComputePool;
 const precedence = @import("precedence.zig");
 const slir = @import("slir.zig");
-const slir_res = @import("slir_resolution.zig");
 const SLIR = slir.SLIR;
 const Guid = SLIR.Guid;
 const Reference = SLIR.Reference;
 const slir_cons = @import("slir_construction.zig");
 pub const MutSLIR = slir_cons.MutSLIR;
+const slir_res = @import("slir_resolution.zig");
 const StringInternPool = @import("string_intern_pool.zig").StringInternPool;
 const tokenizer = @import("tokenizer.zig");
 const Token = tokenizer.Token;
-const ComputePool = @import("compute_pool.zig").ComputePool;
 
 //Typing guide: Use errors for a failure and null for a probe that didnt succeed. !?T means this might return something or it might fail gently or it might fail hard.
 //Unless this function finds something that forces it to commit, speculatively return null, the caller can always promote null to an error
@@ -160,7 +160,7 @@ fn parseTypePrimative(state: MutSLIR) !?Guid {
     switch (next_token) {
         .symbol => |sym| {
             if (sym == .void) {
-                try state.addInstructionPoly(.{guid}, .type_unsigned_int, .{0});
+                try state.addInstructionPoly(.{guid}, .op_type_unsigned_int, .{0});
                 return guid;
             }
             return state.restoreThrow(save);
@@ -170,7 +170,7 @@ fn parseTypePrimative(state: MutSLIR) !?Guid {
             return guid;
         },
         .identifier => |id| {
-            try state.addInstructionPoly(.{guid}, .load_named_value, .{id});
+            try state.addInstructionPoly(.{guid}, .op_load_named_value, .{id});
             const as_type = state.slir.getGuid();
             try state.addInstructionPoly(.{as_type}, .ensure_is_type, .{guid});
             return as_type;
@@ -210,11 +210,11 @@ fn parseDeclStatement(state: MutSLIR) !?void {
         try state.addInstructionPoly(.{new_kind}, .qualify_type_view, .{kind});
 
         const cast_value = state.slir.getGuid();
-        try state.addInstructionPoly(.{cast_value}, .ensure_cast, .{ var_decl.value, new_kind });
-        
+        try state.addInstructionPoly(.{cast_value}, .ensure_may_cast, .{ var_decl.value, new_kind });
+
         const stored_value = state.slir.getGuid();
-        try state.addInstructionPoly(.{stored_value}, .value, .{ cast_value, new_kind });
-        try state.addInstructionPoly(.{}, .named_value, .{ var_decl.name, stored_value });
+        try state.addInstructionPoly(.{stored_value}, .struct_value, .{ cast_value, new_kind });
+        try state.addInstructionPoly(.{}, .info_named_value, .{ var_decl.name, stored_value });
     } else if (state.eatSymbol(.@"var")) {
         const var_decl = try parseVariableDecl(state) orelse return error.expected_variable_declaration;
 
@@ -227,8 +227,8 @@ fn parseDeclStatement(state: MutSLIR) !?void {
         try state.addInstructionPoly(.{new_kind}, .qualify_type_mut, .{kind});
 
         const stored_value = state.slir.getGuid();
-        try state.addInstructionPoly(.{stored_value}, .value, .{ var_decl.value, new_kind });
-        try state.addInstructionPoly(.{}, .named_value, .{ var_decl.name, stored_value });
+        try state.addInstructionPoly(.{stored_value}, .struct_value, .{ var_decl.value, new_kind });
+        try state.addInstructionPoly(.{}, .info_named_value, .{ var_decl.name, stored_value });
     } else if (state.eatSymbol(.@"volatile")) {
         return error.unimplemented;
     } else return state.restoreThrow(save);
@@ -249,7 +249,7 @@ fn parseVariableDecl(state: MutSLIR) !?VarDecl {
     const expr_value = try parseExpression(state, .fromGuid(kind));
 
     if (didInfer) {
-        try state.addInstructionPoly(.{kind}, .type_of, .{expr_value});
+        try state.addInstructionPoly(.{kind}, .op_type_of, .{expr_value});
     }
     try state.expectSymbol(.@";");
     return .{ .name = name, .value = expr_value.toTaggedUnion().instr_ref, .kind = kind };

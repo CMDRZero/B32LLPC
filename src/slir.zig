@@ -3,10 +3,10 @@ const ArrayList = std.ArrayList;
 const mem = std.mem;
 const Allocator = mem.Allocator;
 
-const StringInternPool = @import("string_intern_pool.zig").StringInternPool;
 const ComputePool = @import("compute_pool.zig").ComputePool;
+const Compute = ComputePool.Compute;
+const StringInternPool = @import("string_intern_pool.zig").StringInternPool;
 const String = StringInternPool.String;
-const Compute =ComputePool.Compute;
 const tokenizer = @import("tokenizer.zig");
 
 pub const SLIR = struct {
@@ -44,7 +44,7 @@ pub const SLIR = struct {
             if (val <= std.math.maxInt(u32)) return .{ .string_ref = .{ .tag = @enumFromInt(val), .pool = undefined } };
             val -= num_u32;
 
-            if (val <= std.math.maxInt(u32)) return .{ .compute_ref = .{ .tag = @enumFromInt(val)} };
+            if (val <= std.math.maxInt(u32)) return .{ .compute_ref = .{ .tag = @enumFromInt(val) } };
             val -= num_u32;
 
             return .{ .int = val };
@@ -64,7 +64,7 @@ pub const SLIR = struct {
         }
 
         pub fn fromCompute(compute: Compute) Reference {
-            return @enumFromInt(2*num_u32 + @intFromEnum(compute.tag));
+            return @enumFromInt(2 * num_u32 + @intFromEnum(compute.tag));
         }
 
         pub fn fromAny(value: anytype) ?Reference {
@@ -140,66 +140,66 @@ pub const SLIR = struct {
                 args: ArrayList(Reference),
 
                 pub const Tag = enum {
-                    add,
-                    sub,
-                    mul,
-                    div,
-                    mod,
+                    op_add,
+                    op_sub,
+                    op_mul,
+                    op_div,
+                    op_mod,
 
-                    bit_shift_left,
-                    bit_shift_right,
+                    op_bit_shift_left,
+                    op_bit_shift_right,
 
-                    bit_and,
-                    bit_andn,
-                    bit_xor,
-                    bit_xorn,
-                    bit_or,
-                    bit_orn,
+                    op_bit_and,
+                    op_bit_andn,
+                    op_bit_xor,
+                    op_bit_xorn,
+                    op_bit_or,
+                    op_bit_orn,
 
                     alias,
-                    slice_or_range_refine,
+                    op_slice_or_range_refine,
 
-                    value,
+                    struct_value,
 
-                    type_of,
+                    op_type_of,
 
                     ensure_is_type,
-                    ensure_cast,
+                    ensure_may_cast,
 
                     qualify_type_const,
                     qualify_type_var,
                     qualify_type_view,
                     qualify_type_mut,
 
-                    type_signed_int,
-                    type_unsigned_int,
-                    type_floating_point,
+                    op_type_signed_int,
+                    op_type_unsigned_int,
+                    op_type_floating_point,
 
-                    decimal_integer_lit,
+                    op_decimal_integer_lit,
 
-                    int_lit,
-                    type_lit,
+                    struct_int_lit,
+                    struct_type_lit,
 
-                    named_value,
-                    load_named_value,
+                    info_named_value,
+                    op_load_named_value,
 
                     pub fn fromOperator(op: tokenizer.Operator.Tag) Tag {
                         return switch (op) {
-                            .@"+" => .add,
-                            .@"-" => .sub,
-                            .@"*" => .mul,
-                            .@"/" => .div,
-                            .@"%" => .mod,
+                            .@"+" => .op_add,
+                            .@"-" => .op_sub,
+                            .@"*" => .op_mul,
+                            .@"/" => .op_div,
+                            .@"%" => .op_mod,
 
-                            .@"<<" => .bit_shift_left,
-                            .@">>" => .bit_shift_right,
+                            .@"<<" => .op_bit_shift_left,
+                            .@">>" => .op_bit_shift_right,
 
-                            .@"&" => .bit_and,
-                            .@"&~" => .bit_andn,
-                            .@"^" => .bit_xor,
-                            .@"^~" => .bit_xorn,
-                            .@"|" => .bit_or,
-                            .@"|~" => .bit_orn,
+                            .@"&" => .op_bit_and,
+                            .@"&~" => .op_bit_andn,
+                            .@"^" => .op_bit_xor,
+                            .@"^~" => .op_bit_xorn,
+                            .@"|" => .op_bit_or,
+                            .@"|~" => .op_bit_orn,
 
                             else => unreachable,
                         };
@@ -207,9 +207,9 @@ pub const SLIR = struct {
 
                     pub fn fromKindTag(op: tokenizer.Token.Kind.Tag) Tag {
                         return switch (op) {
-                            .unsigned_int => .type_unsigned_int,
-                            .signed_int => .type_signed_int,
-                            .float => .type_floating_point,
+                            .unsigned_int => .op_type_unsigned_int,
+                            .signed_int => .op_type_signed_int,
+                            .float => .op_type_floating_point,
                         };
                     }
                 };
