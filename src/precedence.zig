@@ -195,6 +195,7 @@ pub fn parseExpression(state: MutSLIR, resT: Reference) !?Reference {
 }
 
 fn parseExprPrecedence(state: MutSLIR, min_exc_prec: PrecClass, resT: Reference) !?Reference {
+    const span_start = state.startSpan();
     var node: Reference = try parsePrefixExpr(state, resT) orelse return null;
 
     var save = state.getState();
@@ -225,8 +226,9 @@ fn parseExprPrecedence(state: MutSLIR, min_exc_prec: PrecClass, resT: Reference)
         };
 
         const res = state.slir.getGuid();
-        try state.addInstructionPoly(.{res}, .fromOperator(operator.tag), .{ node, rhs });
-        node = try makeConstValue(state, .fromGuid(res));
+        const span = state.endSpan(span_start);
+        try state.addInstructionPoly(span, .{res}, .fromOperator(operator.tag), .{ node, rhs });
+        node = try makeConstValue(state, .fromGuid(res), span);
     }
 
     return node;
@@ -240,18 +242,20 @@ fn parsePrefixExpr(state: MutSLIR, resT: Reference) !?Reference {
 //TODO: Woefully unfinished
 fn parsePrimative(state: MutSLIR, resT: Reference) !?Reference {
     _ = resT;
+    const span_start = state.startSpan();
     const token = state.popToken();
+    const span = state.endSpan(span_start);
     const value: Reference = switch (token) {
         .kind => |kind| ret: {
             const res = state.slir.getGuid();
-            try state.addInstructionPoly(.{res}, .fromKindTag(kind.tag), .{kind.bits});
+            try state.addInstructionPoly(span, .{res}, .fromKindTag(kind.tag), .{kind.bits});
             break :ret .fromGuid(res);
         },
         .literal => |lit| ret: {
             switch (lit.tag) {
                 .dec_int => |str| {
                     const res = state.slir.getGuid();
-                    try state.addInstructionPoly(.{res}, .op_decimal_integer_lit, .{try state.slir.intern.convert(str)});
+                    try state.addInstructionPoly(span, .{res}, .op_decimal_integer_lit, .{try state.slir.intern.convert(str)});
                     break :ret .fromGuid(res);
                 },
                 else => @panic("TODO"),
@@ -260,20 +264,20 @@ fn parsePrimative(state: MutSLIR, resT: Reference) !?Reference {
         else => @panic("TODO"),
     };
 
-    return try makeConstValue(state, value);
+    return try makeConstValue(state, value, span);
 }
 
-fn makeConstValue(state: MutSLIR, value: Reference) !Reference {
+fn makeConstValue(state: MutSLIR, value: Reference, span: SLIR.Span) !Reference {
     var kind = state.slir.getGuid();
-    try state.addInstructionPoly(.{kind}, .op_type_of, .{value});
+    try state.addInstructionPoly(span, .{kind}, .op_type_of, .{value});
     var new_kind = state.slir.getGuid();
-    try state.addInstructionPoly(.{new_kind}, .qualify_type_const, .{kind});
+    try state.addInstructionPoly(span, .{new_kind}, .qualify_type_const, .{kind});
 
     kind = new_kind;
     new_kind = state.slir.getGuid();
-    try state.addInstructionPoly(.{new_kind}, .qualify_type_view, .{kind});
+    try state.addInstructionPoly(span, .{new_kind}, .qualify_type_view, .{kind});
 
     const stored_value = state.slir.getGuid();
-    try state.addInstructionPoly(.{stored_value}, .struct_value, .{ value, new_kind });
+    try state.addInstructionPoly(span, .{stored_value}, .struct_value, .{ value, new_kind });
     return .fromGuid(stored_value);
 }

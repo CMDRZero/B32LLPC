@@ -116,6 +116,10 @@ pub const SLIR = struct {
         _,
         const init: Guid = @enumFromInt(1);
     };
+    
+    pub const Span = struct {
+        slice: []u8
+    };
 
     pub const Function = struct {
         name: String,
@@ -138,6 +142,7 @@ pub const SLIR = struct {
                 tag: Tag,
                 results: ArrayList(Reference),
                 args: ArrayList(Reference),
+                span: Span,
 
                 pub const Tag = enum {
                     op_add,

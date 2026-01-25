@@ -21,7 +21,6 @@ pub const InParseSLIR = struct {
         num_functions: usize,
     };
 
-
     pub fn getState(self: InParseSLIR) SaveState {
         return .{
             .source_file = self.source_file,
@@ -40,6 +39,20 @@ pub const InParseSLIR = struct {
         self.setState(save);
         return null;
     }
+
+    pub fn getGuid(self: *InParseSLIR) SLIR.Guid {
+        return self.slir.getGuid();
+    }
+
+    pub fn startSpan(self: *InParseSLIR) PartialSpan {
+        return .{ .slice = self.source_file };
+    }
+    pub fn endSpan(self: *InParseSLIR, span: PartialSpan) SLIR.Span {
+        return .{ .slice = span.slice[0..self.source_file.ptr - span.slice.ptr]};
+    }
+    const PartialSpan = struct {
+        slice: []u8,
+    };
 
     //Now for convience we will import the advanced tokenizer functions
     pub fn popToken(state: MutSLIR) Token {
@@ -86,7 +99,7 @@ pub const InParseSLIR = struct {
         return adv_tkn.popOperator(state);
     }
 
-    pub fn addInstructionPoly(state: MutSLIR, results: anytype, tag: SLIR.Function.Block.Instruction.Tag, args: anytype) !void {
+    pub fn addInstructionPoly(state: MutSLIR, span: SLIR.Span, results: anytype, tag: SLIR.Function.Block.Instruction.Tag, args: anytype) !void {
         const num_results = std.meta.fields(@TypeOf(results)).len;
         const heap_results = try state.slir.alloc.alloc(SLIR.Reference, num_results);
         inline for (0..num_results) |i| {
@@ -115,6 +128,7 @@ pub const InParseSLIR = struct {
             .tag = tag,
             .results = .fromOwnedSlice(heap_results),
             .args = .fromOwnedSlice(heap_args),
+            .span = span,
         });
     }
 };

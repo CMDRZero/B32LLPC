@@ -110,10 +110,12 @@ fn parseTypeCopyQualifier(state: MutSLIR) !?Guid {
 
 fn parseTypeDataQualifier(state: MutSLIR) !?Guid {
     const save = state.getState();
+    const span_start = state.startSpan();
     if (state.eatSymbol(.@"const")) {
+        const span = state.endSpan(span_start);
         const aggr = try parseTypeAggregate(state) orelse return state.restoreThrow(save);
-        const quafed = state.slir.getGuid();
-        try state.addInstructionPoly(.{quafed}, .qualify_type_const, .{aggr});
+        const quafed = state.getGuid();
+        try state.addInstructionPoly(span, .{quafed}, .qualify_type_const, .{aggr});
         return quafed;
     } else if (state.eatSymbol(.@"var")) {
         return error.unimplemented;
@@ -155,24 +157,26 @@ fn parseTypeReference(state: MutSLIR) !?Guid {
 
 fn parseTypePrimative(state: MutSLIR) !?Guid {
     const save = state.getState();
+    const span_start = state.startSpan();
     const next_token = state.popToken();
-    const guid = state.slir.getGuid();
+    const span = state.endSpan(span_start);
+    const guid = state.getGuid();
     switch (next_token) {
         .symbol => |sym| {
             if (sym == .void) {
-                try state.addInstructionPoly(.{guid}, .op_type_unsigned_int, .{0});
+                try state.addInstructionPoly(span, .{guid}, .op_type_unsigned_int, .{0});
                 return guid;
             }
             return state.restoreThrow(save);
         },
         .kind => {
-            try state.addInstructionPoly(.{guid}, .fromKindTag(next_token.kind.tag), .{next_token.kind.bits});
+            try state.addInstructionPoly(span, .{guid}, .fromKindTag(next_token.kind.tag), .{next_token.kind.bits});
             return guid;
         },
         .identifier => |id| {
-            try state.addInstructionPoly(.{guid}, .op_load_named_value, .{id});
-            const as_type = state.slir.getGuid();
-            try state.addInstructionPoly(.{as_type}, .ensure_is_type, .{guid});
+            try state.addInstructionPoly(span, .{guid}, .op_load_named_value, .{id});
+            const as_type = state.getGuid();
+            try state.addInstructionPoly(span, .{as_type}, .ensure_is_type, .{guid});
             return as_type;
         },
         else => return state.restoreThrow(save),
@@ -198,37 +202,40 @@ fn parseStatement(state: MutSLIR) !?void {
 
 fn parseDeclStatement(state: MutSLIR) !?void {
     const save = state.getState();
+    const span_start = state.startSpan();
     if (state.eatSymbol(.@"const")) {
+        const span = state.endSpan(span_start);
         const var_decl = try parseVariableDecl(state) orelse return error.expected_variable_declaration;
 
         var kind = var_decl.kind;
-        var new_kind = state.slir.getGuid();
-        try state.addInstructionPoly(.{new_kind}, .qualify_type_const, .{kind});
+        var new_kind = state.getGuid();
+        try state.addInstructionPoly(span, .{new_kind}, .qualify_type_const, .{kind});
 
         kind = new_kind;
-        new_kind = state.slir.getGuid();
-        try state.addInstructionPoly(.{new_kind}, .qualify_type_view, .{kind});
+        new_kind = state.getGuid();
+        try state.addInstructionPoly(span, .{new_kind}, .qualify_type_view, .{kind});
 
-        const cast_value = state.slir.getGuid();
-        try state.addInstructionPoly(.{cast_value}, .ensure_may_cast, .{ var_decl.value, new_kind });
+        const cast_value = state.getGuid();
+        try state.addInstructionPoly(span, .{cast_value}, .ensure_may_cast, .{ var_decl.value, new_kind });
 
-        const stored_value = state.slir.getGuid();
-        try state.addInstructionPoly(.{stored_value}, .struct_value, .{ cast_value, new_kind });
-        try state.addInstructionPoly(.{}, .info_named_value, .{ var_decl.name, stored_value });
+        const stored_value = state.getGuid();
+        try state.addInstructionPoly(span, .{stored_value}, .struct_value, .{ cast_value, new_kind });
+        try state.addInstructionPoly(span, .{}, .info_named_value, .{ var_decl.name, stored_value });
     } else if (state.eatSymbol(.@"var")) {
+        const span = state.endSpan(span_start);
         const var_decl = try parseVariableDecl(state) orelse return error.expected_variable_declaration;
 
         var kind = var_decl.kind;
-        var new_kind = state.slir.getGuid();
-        try state.addInstructionPoly(.{new_kind}, .qualify_type_var, .{kind});
+        var new_kind = state.getGuid();
+        try state.addInstructionPoly(span, .{new_kind}, .qualify_type_var, .{kind});
 
         kind = new_kind;
-        new_kind = state.slir.getGuid();
-        try state.addInstructionPoly(.{new_kind}, .qualify_type_mut, .{kind});
+        new_kind = state.getGuid();
+        try state.addInstructionPoly(span, .{new_kind}, .qualify_type_mut, .{kind});
 
-        const stored_value = state.slir.getGuid();
-        try state.addInstructionPoly(.{stored_value}, .struct_value, .{ var_decl.value, new_kind });
-        try state.addInstructionPoly(.{}, .info_named_value, .{ var_decl.name, stored_value });
+        const stored_value = state.getGuid();
+        try state.addInstructionPoly(span, .{stored_value}, .struct_value, .{ var_decl.value, new_kind });
+        try state.addInstructionPoly(span, .{}, .info_named_value, .{ var_decl.name, stored_value });
     } else if (state.eatSymbol(.@"volatile")) {
         return error.unimplemented;
     } else return state.restoreThrow(save);
@@ -241,15 +248,28 @@ const VarDecl = struct {
 };
 //We assume if you're calling this its on purpose, so null never occurs
 fn parseVariableDecl(state: MutSLIR) !?VarDecl {
-    //const save = state.getState();
+    const span_start = state.startSpan();
     const name = try state.popIdentifier();
-    const kind, const didInfer = if (state.eatSymbol(.@":")) (.{ try parseType(state) orelse return error.expected_type, false }) else (.{ state.slir.getGuid(), true });
+    const span = state.endSpan(span_start);
+    const kind, const did_infer= b: {
+        if (state.eatSymbol(.@":")) {
+            break :b .{ 
+                try parseType(state) orelse return error.expected_type, 
+                false,
+            };
+        } else {
+            break :b .{
+                state.getGuid(),
+                true,
+            };
+        }
+    };
     try state.expectSymbol(.@"=");
 
     const expr_value = try parseExpression(state, .fromGuid(kind));
 
-    if (didInfer) {
-        try state.addInstructionPoly(.{kind}, .op_type_of, .{expr_value});
+    if (did_infer) {
+        try state.addInstructionPoly(span, .{kind}, .op_type_of, .{expr_value});
     }
     try state.expectSymbol(.@";");
     return .{ .name = name, .value = expr_value.toTaggedUnion().instr_ref, .kind = kind };
