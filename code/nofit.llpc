@@ -1,0 +1,3 @@
+fn Main() void {
+    const x: u1 = 7;
+}

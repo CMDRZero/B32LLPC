@@ -159,6 +159,37 @@ pub const partial = struct {
                 signed: bool,
                 bits: usize
             };
+
+            pub fn lowBound(self: Integer, alloc: std.mem.Allocator) !std.math.big.int.Managed {
+                if (self.low) |low| {
+                    return try deepCopy(low.toManaged(alloc), alloc);
+                }
+                if (self.backing.explicit.signed) {
+                    var ret: std.math.big.int.Managed = try .initSet(alloc, 1);
+                    try ret.shiftLeft(&ret, self.backing.explicit.bits - 1);
+                    ret.negate();
+                    return ret;
+                } else {
+                    return try .initSet(alloc, 0);
+                }
+            }
+
+            pub fn highBound(self: Integer, alloc: std.mem.Allocator) !std.math.big.int.Managed {
+                if (self.high) |high| {
+                    return try deepCopy(high.toManaged(alloc), alloc);
+                }
+                if (self.backing.explicit.signed) {
+                    var ret: std.math.big.int.Managed = try .initSet(alloc, 1);
+                    try ret.shiftLeft(&ret, self.backing.explicit.bits - 1);
+                    try ret.addScalar(&ret, -1);
+                    return ret;
+                } else {
+                    var ret: std.math.big.int.Managed = try .initSet(alloc, 1);
+                    try ret.shiftLeft(&ret, self.backing.explicit.bits);
+                    try ret.addScalar(&ret, -1);
+                    return ret;
+                }
+            }
         };
 
         pub const MakeIntegerBacking = union (enum) {

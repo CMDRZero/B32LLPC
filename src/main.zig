@@ -33,12 +33,12 @@ pub fn main(init: std.process.Init) !void {
     const slir = try temp_ast.parse(arena, &intern, &computes, filetext);
     std.debug.print("{f}\n", .{slir});
 
-    const span = source_display.State.Span.fromSlice(slir.functions.items[0].blocks.items[1].instrs.items[9].span.slice);
+    // const span = source_display.State.Span.fromSlice(slir.functions.items[0].blocks.items[1].instrs.items[9].span.slice);
 
-    var writer: std.Io.Writer.Allocating = .init(init.gpa);
-    defer writer.deinit();
-    try span.display(&writer.writer, "Test", .{});
-    std.debug.print("{s}\n", .{writer.written()});
+    // var writer: std.Io.Writer.Allocating = .init(init.gpa);
+    // defer writer.deinit();
+    // try span.display(&writer.writer, "Test", .{});
+    // std.debug.print("{s}\n", .{writer.written()});
 
     // var root: @import("types.zig").partial.Root = .{.integer = .{.signed = false, .bits = 32, .low = (try std.math.big.int.Managed.initSet(arena, 1)).toMutable()}};
     // const kind = @import("types.zig").partial.Type.fromRoot(&root);

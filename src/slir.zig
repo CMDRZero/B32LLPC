@@ -10,12 +10,42 @@ const StringInternPool = @import("string_intern_pool.zig").StringInternPool;
 const String = StringInternPool.String;
 const tokenizer = @import("tokenizer.zig");
 
+const warningsAreErrors = false;
+const censuresAreErrors = true;
+
 pub const SLIR = struct {
     alloc: Allocator,
     intern: *StringInternPool,
     computes: *ComputePool,
     next_guid: Guid,
     functions: ArrayList(Function),
+
+    pub fn showWarning(self: *SLIR, span: Span, comptime message: []const u8, args: anytype) !void {
+        var disp_span: source_display.State.Span = .fromSlice(span.slice);
+        var writer: std.Io.Writer.Allocating = .init(self.alloc);
+        defer writer.deinit();
+        try disp_span.display(&writer.writer, "WARNING: "++message, args);
+        std.debug.print("WARNING:\n{s}\n", .{writer.written()});
+        if (warningsAreErrors) return error.warning;
+    }
+
+    pub fn showCensure(self: *SLIR, span: Span, comptime message: []const u8, args: anytype) !void {
+        var disp_span: source_display.State.Span = .fromSlice(span.slice);
+        var writer: std.Io.Writer.Allocating = .init(self.alloc);
+        defer writer.deinit();
+        try disp_span.display(&writer.writer, "CENSURE: "++message, args);
+        std.debug.print("CENSURE:\n{s}\n", .{writer.written()});
+        if (censuresAreErrors) return error.censure;
+    }
+
+    pub fn showError(self: *SLIR, span: Span, comptime message: []const u8, args: anytype) !void {
+        var disp_span: source_display.State.Span = .fromSlice(span.slice);
+        var writer: std.Io.Writer.Allocating = .init(self.alloc);
+        defer writer.deinit();
+        try disp_span.display(&writer.writer, "ERROR: "++message, args);
+        std.debug.print("{s}\n", .{writer.written()});
+        return error.@"error";
+    }
 
     //Either an instruction reference, a string intern pool reference, or a plain integer.
     pub const Reference = enum(u64) {
@@ -167,9 +197,26 @@ pub const SLIR = struct {
                     op_bit_or,
                     op_bit_orn,
 
+                    typed_op_add,
+                    typed_op_sub,
+                    typed_op_mul,
+                    typed_op_div,
+                    typed_op_mod,
+
+                    typed_op_bit_shift_left,
+                    typed_op_bit_shift_right,
+
+                    typed_op_bit_and,
+                    typed_op_bit_andn,
+                    typed_op_bit_xor,
+                    typed_op_bit_xorn,
+                    typed_op_bit_or,
+                    typed_op_bit_orn,
+
                     alias,
                     op_slice_or_range_refine,
 
+                    op_struct_value,
                     struct_value,
 
                     op_type_of,

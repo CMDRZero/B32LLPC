@@ -1,5 +1,4 @@
 fn Main() void {
-    const nofit: u1 = 5;
     const T = u8;
     {
         const T = u1;

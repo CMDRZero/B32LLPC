@@ -118,7 +118,11 @@ fn parseTypeDataQualifier(state: MutSLIR) !?Guid {
         try state.addInstructionPoly(span, .{quafed}, .qualify_type_const, .{aggr});
         return quafed;
     } else if (state.eatSymbol(.@"var")) {
-        return error.unimplemented;
+        const span = state.endSpan(span_start);
+        const aggr = try parseTypeAggregate(state) orelse return state.restoreThrow(save);
+        const quafed = state.getGuid();
+        try state.addInstructionPoly(span, .{quafed}, .qualify_type_var, .{aggr});
+        return quafed;
     } else if (state.eatSymbol(.@"volatile")) {
         return error.unimplemented;
     }
@@ -219,7 +223,7 @@ fn parseDeclStatement(state: MutSLIR) !?void {
         try state.addInstructionPoly(span, .{cast_value}, .ensure_may_cast, .{ var_decl.value, new_kind });
 
         const stored_value = state.getGuid();
-        try state.addInstructionPoly(span, .{stored_value}, .struct_value, .{ cast_value, new_kind });
+        try state.addInstructionPoly(span, .{stored_value}, .op_struct_value, .{ cast_value, new_kind });
         try state.addInstructionPoly(span, .{}, .info_named_value, .{ var_decl.name, stored_value });
     } else if (state.eatSymbol(.@"var")) {
         const span = state.endSpan(span_start);
@@ -233,8 +237,11 @@ fn parseDeclStatement(state: MutSLIR) !?void {
         new_kind = state.getGuid();
         try state.addInstructionPoly(span, .{new_kind}, .qualify_type_mut, .{kind});
 
+        const cast_value = state.getGuid();
+        try state.addInstructionPoly(span, .{cast_value}, .ensure_may_cast, .{ var_decl.value, new_kind });
+
         const stored_value = state.getGuid();
-        try state.addInstructionPoly(span, .{stored_value}, .struct_value, .{ var_decl.value, new_kind });
+        try state.addInstructionPoly(span, .{stored_value}, .op_struct_value, .{ cast_value, new_kind });
         try state.addInstructionPoly(span, .{}, .info_named_value, .{ var_decl.name, stored_value });
     } else if (state.eatSymbol(.@"volatile")) {
         return error.unimplemented;
