@@ -12,15 +12,21 @@ pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     const arena = init.arena.allocator();
 
-    const filepath = "code/test_type_val.llpc";
+    var filepath: []const u8 = "code/test_type_val.llpc";
+
+    //In the future, use the first nonself argument for what filepath to load...
+    //The future is today
+    std.debug.print("Args are:\n", .{});
+    for (try init.minimal.args.toSlice(arena), 0..) |arg, arg_id| {
+        std.debug.print(" - {s}\n", .{arg});
+        if (arg_id == 1) {
+            filepath = arg;
+        }
+    }
+
+    
     const filetext = try std.Io.Dir.cwd().readFileAlloc(init.io, filepath, gpa, .limited(max_bytes)); //0.16.0-dev.2146+98db4570b version
     defer gpa.free(filetext);
-    
-    //In the future, use the first nonself argument for what filepath to load...
-    std.debug.print("Args are:\n", .{});
-    for (try init.minimal.args.toSlice(arena)) |arg| {
-        std.debug.print(" - {s}\n", .{arg});
-    }
 
     var intern: StringInternPool = .init(arena);
     intern.globalize();
