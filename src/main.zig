@@ -9,8 +9,16 @@ const ComputePool = @import("compute_pool.zig").ComputePool;
 const max_bytes = 1_000_000;
 
 pub fn main(init: std.process.Init) !void {
+    //var smp: std.heap.SmpAllocator = .{};
+
     const gpa = init.gpa;
-    const arena = init.arena.allocator();
+    //const arena = init.arena.allocator();
+
+    var custom_gpa: std.heap.DebugAllocator(.{ .verbose_log = true }) = .init;
+
+    var iarena: std.heap.ArenaAllocator = .init(custom_gpa.allocator());
+    defer iarena.deinit();
+    const arena = iarena.allocator();
 
     var filepath: []const u8 = "code/test_type_val.llpc";
 
@@ -30,6 +38,7 @@ pub fn main(init: std.process.Init) !void {
 
     try source_display.State.init(arena, filetext);
 
+    errdefer std.debug.print("Bytes used: {B}\n", .{iarena.queryCapacity()});
     const slir = try temp_ast.parse(arena, filetext);
     std.debug.print("{f}\n", .{slir});
 

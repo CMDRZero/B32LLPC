@@ -1,7 +1,8 @@
 const std = @import("std");
 
 const compute_pool = @import("compute_pool.zig");
-const compute = @import("new_compute_pool.zig").compute;
+const compute = new_compute_pool.compute;
+const new_compute_pool = @import("new_compute_pool.zig");
 const slir = @import("slir.zig");
 const SLIR = slir.SLIR;
 const Instr = SLIR.Function.Block.Instruction;
@@ -19,6 +20,9 @@ const Type = new_types.partial.Type;
 const RootType = new_types.partial.Root;
 // const Compute = compute_pool.ComputePool.Compute;
 // const SLIR.AnyItem = compute_pool.ComputePool.Item;
+
+///Symbolic type, must always be null, but has some extra info to allow type coercion
+const Null = ?[]SLIR.AnyItem;
 
 const deepCopy = types.deepCopy;
 const refDeepCopy = types.refDeepCopy;
@@ -60,7 +64,7 @@ fn computeRef(ir: MutSLIR, target: SLIR.AnyItem) !void {
         std.debug.print("Dependency queue is {any}\n", .{compute_queue.items});
     }
     while (compute_queue.items.len != 0) {
-        std.debug.print("Dependency queue is {any}\n", .{compute_queue.items});
+        //std.debug.print("Dependency queue is {any}\n", .{compute_queue.items});
         const temp_goal = compute_queue.pop().?;
         const func, const block, const instr = getInstrByResult(ir, temp_goal).?;
         errdefer compute_queue.appendAssumeCapacity(temp_goal);
@@ -86,8 +90,8 @@ const EvalCtx = struct {
 };
 
 fn evaluateInstruction(ir: MutSLIR, context: EvalCtx) !?[]SLIR.AnyItem {
-    std.debug.print("Evaled: `{f}`\n", .{context.instr});
-    defer std.debug.print("Into:   `{f}`\n{f}\n", .{context.instr, ir.slir});
+    //std.debug.print("Evaled: `{f}`\n", .{context.instr});
+    //defer std.debug.print("Into:   `{f}`\n{f}\n", .{context.instr, ir.slir});
     switch (context.instr.tag) { inline else => |tag| {
         const fn_name = comptime extra_fmt.comptimeLowercaseToLowerCamel(@tagName(tag));
         if (!std.meta.hasFn(eval_impl, fn_name)) {
@@ -98,16 +102,9 @@ fn evaluateInstruction(ir: MutSLIR, context: EvalCtx) !?[]SLIR.AnyItem {
     }} 
 }
 
-// Some notes to self:
-// typed_op_ means it has 2 returns, the value and the type
-// op_ typically has 1 return and the comptime eval just turns it into typed_op_
-// 
-// 
-// 
-// 
-// 
-
 const eval_impl = struct {
+    const TypeRef = compute.Item(.kind);
+    const BigIntRef = compute.Item(.integer_big);
 
     pub fn opTypeSignedInt(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.AnyItem {
         return genericOpTypeInteger(ir, ctx, true);
@@ -117,102 +114,43 @@ const eval_impl = struct {
         return genericOpTypeInteger(ir, ctx, false);
     }
 
-    fn genericOpTypeInteger(ir: MutSLIR, ctx: EvalCtx, signed: bool) !?[]SLIR.AnyItem {
+    fn genericOpTypeInteger(ir: MutSLIR, ctx: EvalCtx, signed: bool) !Null {
         const bits = ctx.instr.args.items[0].toTagged().integer_usize;
-        const ref: SLIR.AnyItem = try makeInteger(
+        const value: TypeRef = try makeIntegerType(
             ir,
             .{ .explicit = .{ .bits = bits, .signed = signed }},
             .{},
         );
-        ctx.instr.args.items[0] = ref;
+        ctx.instr.args.items[0] = try refTypedValue(canon_type_type, value.forget(), ir.slir.alloc);
         ctx.instr.tag = .struct_type_lit;
+        ctx.instr.results.items[0] = try refTypedValue(canon_type_type, ctx.instr.results.items[0], ir.slir.alloc);
+        return null;
+    }
+
+    pub fn opTypeType(ir: MutSLIR, ctx: EvalCtx) !Null {
+        try ctx.instr.args.append(ir.slir.alloc, try refTypedValue(canon_type_type, canon_type_type.forget(), ir.slir.alloc));
+        ctx.instr.tag = .struct_type_lit;
+        ctx.instr.results.items[0] = try refTypedValue(canon_type_type, ctx.instr.results.items[0], ir.slir.alloc);
         return null;
     }
 
     pub fn opTypeOf(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.AnyItem {
         const res_def = getInstrByResult(ir, ctx.instr.args.items[0]).?[2];
-        if (isOperator(res_def.tag)) return res_def.results.items;
-        switch (res_def.tag) {
-            .struct_type_lit => {
-                const root: RootType = .kind;
-                const ref: SLIR.AnyItem = try .fromAuto(root);
-                //const ref: SLIR.AnyItem = try refFromRootType(ir, root);
-                ctx.instr.args.items[0] = ref;
-                ctx.instr.tag = .struct_type_lit;
-            },
-            .typed_op_add, => {
-                ctx.instr.tag = .struct_type_lit;
-                ctx.instr.args.items[0] = res_def.results.items[1];
-            },
-            // .struct_value => {
-            //     ctx.instr.tag = .alias;
-            //     ctx.instr.args.items[0] = res_def.args.items[1];
-            // },
-            // .struct_int_lit => {
-            //     const val = switch (computeItemFromInstrArg(ir, res_def, 0)) {
-            //         .int_small => |x| 
-            //             (
-            //                 try big_int.Managed.initSet(ir.slir.alloc, x)
-            //             ).toMutable(),
-                    
-            //         .int_big => |x| 
-            //             x.toMutable(),
-                    
-            //         else => unreachable,
-            //     };
-            //     const ref: SLIR.AnyItem = try makeInteger(ir, .implicit, .{
-            //         .alloc = ir.slir.alloc,
-            //         .low = val,
-            //         .high = val,
-            //     });
-
-            //     ctx.instr.args.items[0] = ref;
-            //     ctx.instr.tag = .struct_type_lit;
-            // },
-            else => try ir.slir.showError(ctx.instr.span, "Bad tag `{t}` for typeof.", .{res_def.tag}),
-                //std.debug.panic(),
+        if (res_def.results.items[0].hasTag(.typed_value) == null) {
+            return res_def.results.items;
         }
+        ctx.instr.tag = .struct_type_lit;
+        ctx.instr.args.items[0] = try typeOf(res_def, ir.slir.alloc);
+        ctx.instr.results.items[0] = try refTypedValue(canon_type_type, ctx.instr.results.items[0], ir.slir.alloc);
+        ctx.instr.args.shrinkRetainingCapacity(1);
         return null;
     }
 
-    fn typeOf(ir: MutSLIR, res_def: *Instr) !SLIR.AnyItem {
-        _ = ir;
-        switch (res_def.tag) {
-            .struct_type_lit => {
-                const root: RootType = .kind;
-                const ref: SLIR.AnyItem = try .fromAuto(root);
-                return ref;
-            },
-            .typed_op_add, => {
-                return res_def.results.items[1];
-            },
-            // .struct_value => {
-            //     //return res_def.args.items[1];
-            //     return getInstrByResult(ir, res_def.args.items[1]).?[2].args.items[0];
-            // },
-            // .struct_int_lit => {
-            //     const val = switch (computeItemFromInstrArg(ir, res_def, 0)) {
-            //         .int_small => |x| 
-            //             (
-            //                 try big_int.Managed.initSet(ir.slir.alloc, x)
-            //             ).toMutable(),
-                    
-            //         .int_big => |x| 
-            //             x.toMutable(),
-                    
-            //         else => unreachable,
-            //     };
-            //     const ref: SLIR.AnyItem = try makeInteger(ir, .implicit, .{
-            //         .alloc = ir.slir.alloc,
-            //         .low = val,
-            //         .high = val,
-            //     });
-
-            //     return ref;
-            // },
-            else => std.debug.panic("Bad tag `{t}` for typeof.", .{res_def.tag}),
-        }
-        unreachable;
+    fn typeOf(res_def: *Instr, alloc: std.mem.Allocator) !SLIR.AnyItem {
+        std.debug.assert(res_def.results.items.len == 1);
+        std.debug.assert(res_def.results.items[0].toTagged() == .typed_value);
+        const kind: TypeRef = res_def.results.items[0].as(.typed_value).kind;
+        return try refTypedValue(canon_type_type, kind.forget(), alloc);
     }
 
     pub fn opDecimalIntegerLit(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.AnyItem {
@@ -222,6 +160,10 @@ const eval_impl = struct {
         ctx.instr.args.items[0] = try genericIntegerLit(ir, ctx.instr.*, str.*, 10);
 
         ctx.instr.tag = .struct_int_lit;
+
+        const value_ref = ctx.instr.args.items[0].as(.integer_big);
+        const kind = try makeIntegerType(ir, .implicit, .{.low = value_ref.*, .high = value_ref.*, .alloc = ir.slir.alloc});
+        ctx.instr.results.items[0] = try refTypedValue(kind, ctx.instr.results.items[0], ir.slir.alloc);
         return null;
     }
 
@@ -256,13 +198,13 @@ const eval_impl = struct {
                 else => std.debug.print("Bad symbol in intger `{c}` for base {d}", .{c, base}),
             }
         }
-        if (int.toInt(usize)) |x| {
-            return .fromAuto(x);
-            //return try refFromCompute(ir, x);
-        } else |_| {
+        // if (int.toInt(usize)) |x| {
+        //     return .fromAuto(x);
+        //     //return try refFromCompute(ir, x);
+        // } else |_| {
             return .fromAuto(int);
             //return try refFromComputeCopied(ir, int);
-        }
+        // }
     }
 
     pub fn qualifyTypeConst(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.AnyItem {
@@ -293,7 +235,8 @@ const eval_impl = struct {
             res_def = getInstrByResult(ir, res_def.args.items[0]).?[2];
         }
 
-        var new_kind = res_def.args.items[0].toTagged().kind;
+        var new_kind = getArgTyped(res_def, 0, .kind);
+        //var new_kind = res_def.args.items[0].toTagged().kind;
         //var new_kind = computeItemFromInstrArg(ir, res_def, 0).toTagged().kind;
 
         switch (qualifier) {
@@ -314,6 +257,7 @@ const eval_impl = struct {
         ctx.instr.tag = .struct_type_lit;
         const ref: SLIR.AnyItem = try .fromAuto(new_kind);
         ctx.instr.args.items[0] = ref;
+        ctx.instr.results.items[0] = try refTypedValue(canon_type_type, ctx.instr.results.items[0], ir.slir.alloc);
         return null;
     }
 
@@ -327,8 +271,50 @@ const eval_impl = struct {
 
     //TODO: ???????
     pub fn ensureMayCast(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.AnyItem {
-        _ = ir;
-        _ = ctx;
+        const cast_res_name = getArg(ctx.instr, 1);
+        const cast_res_def = getInstrByResult(ir, cast_res_name).?[2];
+        const cast_res = getArg(cast_res_def, 0); //We want to strip away any incidental type_type info here just in case
+        
+        const cast_arg_name = getArg(ctx.instr, 0);
+        const cast_arg_def = getInstrByResult(ir, cast_arg_name).?[2];
+        const cast_arg_type = cast_arg_def.args.items[0].as(.typed_value).kind.unwrap().*;
+
+        defer ctx.instr.tag = .alias;
+
+        if (cast_res == canon_type_type.any) {
+            return null;
+        }
+
+        if (cast_res.hasTag(.kind)) |cast_res_type| if (asIntegerType(cast_res_type.*)) |int_res| {
+            const int_arg = asIntegerType(cast_arg_type) orelse {
+                try ir.slir.showError(ctx.instr.span, "Cannot coerce non-integer {f} into integer range {f}\n", .{cast_arg_type, cast_res_type});
+                unreachable;
+            };
+
+            const src_low= try int_arg.lowBound(ir.slir.alloc);
+            const src_high = try int_arg.highBound(ir.slir.alloc);
+
+            var res_low = try int_res.lowBound(ir.slir.alloc);
+            var res_high = try int_res.highBound(ir.slir.alloc);
+
+            var acc: std.math.big.int.Managed = try .init(ir.slir.alloc);
+
+            try acc.sub(&src_low, &res_low);
+            if (!(acc.isPositive() or acc.eqlZero())) {
+                try ir.slir.showError(ctx.instr.span, "Cannot coerce {f} into narrower range {f}\n", .{cast_arg_type, cast_res_type});
+            }
+
+            try acc.sub(&res_high, &src_high);
+            if (!(acc.isPositive() or acc.eqlZero())) {
+                try ir.slir.showError(ctx.instr.span, "Cannot coerce {f} into narrower range {f}\n", .{cast_arg_type, cast_res_type});
+            }
+            //try ir.slir.showError(ctx.instr.span, "Cannot coerce non integer {f} into integer range {f}\n", .{cast_arg, cast_res});
+
+            return null;
+        };
+
+        unreachable;
+
         // const arg1 = ctx.instr.args.items[1].toTagged();
         // if (arg1 == .kind) switch (arg1.kind.aggregate) {
         //     .root => |root| switch (root.unwrap()) {
@@ -386,7 +372,14 @@ const eval_impl = struct {
         //     std.debug.print("WARN: cast of {}\n", .{ctx.instr});
         //     return error.bad;
         // }
-        return null;
+        // return null;
+    }
+
+    fn asIntegerType(kind: Type) ?new_types.partial.Root.Integer {
+        if (kind.aggregate != .root) return null;
+        const root = kind.aggregate.root.unwrap().*;
+        if (root != .integer) return null;
+        return root.integer;
     }
 
     pub fn ensureIsType(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.AnyItem {
@@ -500,25 +493,30 @@ const eval_impl = struct {
     //////////////////////////////////////////////////////////////////////
     //
 
-    pub fn structIntLit(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.AnyItem {
+    pub fn structIntLit(ir: MutSLIR, ctx: EvalCtx) !Null {
         _ = ir;
         _ = ctx;
         return null;
     }
 
-    pub fn structTypeLit(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.AnyItem {
+    pub fn structTypeLit(ir: MutSLIR, ctx: EvalCtx) !Null {
         _ = ir;
         _ = ctx;
         return null;
     }
 
-    pub fn structValue(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.AnyItem {
-        _ = ir;
-        _ = ctx;
+    pub fn structValue(ir: MutSLIR, ctx: EvalCtx) !Null {
+        const res_def = getInstrByResult(ir, getArg(ctx.instr, 1)).?[2];
+        std.debug.assert(res_def.tag == .struct_type_lit);
+        ctx.instr.args.items[0] = try refTypedValue(getArg(res_def, 0).bake(.kind), getArg(ctx.instr, 0), ir.slir.alloc);
+        ctx.instr.args.shrinkRetainingCapacity(1);
+        ctx.instr.tag = .struct_value;
+        ctx.instr.results.items[0] = try refTypedValue(getArg(res_def, 0).bake(.kind), ctx.instr.results.items[0], ir.slir.alloc);
+        
         return null;
     }
 
-    pub fn typedOpAdd(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.AnyItem {
+    pub fn typedOpAdd(ir: MutSLIR, ctx: EvalCtx) !Null {
         _ = ir;
         _ = ctx;
         return null;
@@ -572,6 +570,28 @@ const eval_impl = struct {
     fn isAccessSubset(lhs: ?new_types.qualifier.Access, rhs: new_types.qualifier.Access) bool {
         return (lhs orelse return true).isSubset(rhs);
     }
+
+    fn refTypedValue(kind: TypeRef, value: SLIR.AnyItem, alloc: std.mem.Allocator) !compute.AnyItem {
+        const typed_value: new_compute_pool.TypedValue = .{.kind = kind, .value = value};
+        return try .fromTagged(.{.typed_value = try new_types.refDeepCopy(typed_value, alloc)});
+    }
+
+    fn getArgTyped(instr: *Instr, arg_id: usize, comptime tag: SLIR.AnyItem.Tag) compute.AnyItem.PayloadType(tag) {
+        const tagged = instr.args.items[arg_id].toTagged();
+        if (tagged == .typed_value) {
+            return tagged.typed_value.value.as(tag);
+        } else {
+            return @field(tagged, @tagName(tag));
+        }
+    } 
+    fn getArg(instr: *Instr, arg_id: usize) compute.AnyItem {
+        const tagged = instr.args.items[arg_id].toTagged();
+        if (tagged == .typed_value) {
+            return tagged.typed_value.value;
+        } else {
+            return instr.args.items[arg_id];
+        }
+    } 
 };
 
 //Return null to mean no dependencies
@@ -654,7 +674,7 @@ fn mustResolve(instr: Instr) bool {
     }
 }
 
-fn makeInteger(
+fn makeIntegerType(
     ir: MutSLIR,
     backing: new_types.partial.Root.MakeIntegerBacking,
     defaults: struct {
@@ -662,7 +682,7 @@ fn makeInteger(
         low: ?big_int.Const = null,
         high: ?big_int.Const = null,
     },
-) !SLIR.AnyItem {
+) !eval_impl.TypeRef {
     const root = try ir.slir.alloc.create(new_types.partial.Root);
     const low: ?compute.Item(.integer_big) = if (defaults.low) |real_low| try .from(try refDeepCopy(real_low, ir.slir.alloc)) else null;
     const high: ?compute.Item(.integer_big) = if (defaults.high) |real_high| try .from(try refDeepCopy(real_high, ir.slir.alloc)) else null;
@@ -671,9 +691,7 @@ fn makeInteger(
     const partial: new_types.partial.Type = .fromRoot(root);
     const heap_partial = try refDeepCopy(partial, ir.slir.alloc);
 
-    //const ref: SLIR.AnyItem = .fromCompute(try ir.slir.computes.convert(heap_partial));
-    const ref: SLIR.AnyItem = try .fromAuto(heap_partial);
-    return ref;
+    return try .from(heap_partial);
 }
 
 fn getFunctionByName(ir: MutSLIR, name: String) ?*SLIR.Function {
@@ -691,11 +709,17 @@ fn getInstrByResult(ir: MutSLIR, result: SLIR.AnyItem) ?struct { *SLIR.Function,
             for (block.instrs.items) |*instr| {
                 for (instr.results.items) |res| {
                     if (res == result) {
-                        if (instr.tag == .alias){// or instr.tag == .struct_value) {
+                        if (instr.tag == .alias){
                             return getInstrByResult(ir, instr.args.items[0]);
                         }
                         return .{ func, block, instr };
                     }
+                    if (res.hasTag(.typed_value)) |typed_value| if (typed_value.value == result) {
+                        if (instr.tag == .alias){
+                            return getInstrByResult(ir, instr.args.items[0]);
+                        }
+                        return .{ func, block, instr };
+                    };
                 }
             }
         }

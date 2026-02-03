@@ -139,11 +139,14 @@ pub const SLIR = struct {
                     op_type_signed_int,
                     op_type_unsigned_int,
                     op_type_floating_point,
+                    op_type_type,
 
                     op_decimal_integer_lit,
 
                     struct_int_lit,
                     struct_type_lit,
+
+                    typed_value,
 
                     info_named_value,
                     op_load_named_value,
@@ -200,8 +203,9 @@ pub const SLIR = struct {
                     }
                     const written = buf_writer.written();
                     try writer.print("{s}", .{written});
-                    if (written.len < 70) {
-                        try writer.splatByteAll(' ', 70 - written.len);
+                    const span_padding = 90;
+                    if (written.len < span_padding) {
+                        try writer.splatByteAll(' ', span_padding - written.len);
                     }
                     try writer.print(" Span: {f}", .{self.span});
                 }
@@ -219,6 +223,22 @@ pub const SLIR = struct {
     }
 
     pub fn format(self: SLIR, writer: *std.Io.Writer) !void {
+        var refd_guids: ArrayList(Guid) = .empty;
+        for (self.functions.items) |*func| {
+            for (func.blocks.items) |*block| {
+                for (block.instrs.items) |*instr| {
+                    for (instr.args.items) |res| {
+                        if (res.hasTag(.typed_value)) |tv| {
+                            if (tv.value.hasTag(.instr_ref)) |guid|
+                                refd_guids.append(self.alloc, guid) catch unreachable;
+                        }
+                        if (res.hasTag(.instr_ref)) |guid|
+                            refd_guids.append(self.alloc, guid) catch unreachable;
+                    }
+                }
+            }
+        }
+
         try writer.print("┌─── SLIR\n", .{});
         try writer.print("│ Next Guid: ({})\n", .{@intFromEnum(self.next_guid)});
         for (self.functions.items) |func| {
@@ -238,6 +258,13 @@ pub const SLIR = struct {
                 }
                 try writer.print(":\n", .{});
                 for (block.instrs.items) |instr| {
+                    if (instr.tag == .struct_type_lit) {
+                        if (instr.results.items[0].hasTag(.typed_value)) |tv| {
+                            for (refd_guids.items) |ref_guid| {
+                                if (ref_guid == tv.value.as(.instr_ref)) break;
+                            } else continue;
+                        }
+                    }
                     try writer.print("│ │ │ {f}\n", .{instr});
                 }
             }

@@ -171,6 +171,11 @@ fn parseTypePrimative(state: MutSLIR) !?Guid {
                 try state.addInstructionPoly(span, .{guid}, .op_type_unsigned_int, .{0});
                 return guid;
             }
+            if (sym == .@"type") {
+                try state.addInstructionPoly(span, .{guid}, .op_type_type, .{});
+                return guid;
+            }
+            
             return state.restoreThrow(save);
         },
         .kind => {

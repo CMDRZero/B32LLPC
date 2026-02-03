@@ -1,6 +1,7 @@
 const std = @import("std");
-const types = @import("new_types.zig");
+
 const Guid = @import("slir.zig").SLIR.Guid;
+const types = @import("new_types.zig");
 
 var singleton_pool: ?compute.Pool = null;
 
@@ -12,7 +13,7 @@ pub const compute = struct {
         /// Stores an internal arena allocator. Owns all interned values and are freed on deinit
         pub fn init(alloc: std.mem.Allocator) *Pool {
             std.debug.assert(singleton_pool == null);
-            singleton_pool = .{.array = .empty, .arena = .init(alloc)};
+            singleton_pool = .{ .array = .empty, .arena = .init(alloc) };
 
             return &singleton_pool.?;
         }
@@ -37,39 +38,41 @@ pub const compute = struct {
             return switch (T) {
                 AnyItem => return item,
 
-                Guid => self.cvtTagged(.{.instr_ref = item}),
-                isize => self.cvtTagged(.{.integer_small_signed = item}),
-                usize => self.cvtTagged(.{.integer_usize = item}),
-                
+                Guid => self.cvtTagged(.{ .instr_ref = item }),
+                isize => self.cvtTagged(.{ .integer_small_signed = item }),
+                usize => self.cvtTagged(.{ .integer_usize = item }),
+
                 *[]const u8 => self.cvtTagged(.{ .bytes = item }),
-                []const u8 => self.cvtTagged(.{.bytes = try types.refDeepCopy(item, self.allocator())}),
-                []u8 => self.cvtTagged(.{.bytes = try types.refDeepCopy(@as([]const u8, item), self.allocator())}),
-                
-                @import("tokenizer.zig").Token.Identifier => self.cvtTagged(.{.bytes = try types.refDeepCopy(@as([]const u8, item.str), self.allocator())}),
+                []const u8 => self.cvtTagged(.{ .bytes = try types.refDeepCopy(item, self.allocator()) }),
+                []u8 => self.cvtTagged(.{ .bytes = try types.refDeepCopy(@as([]const u8, item), self.allocator()) }),
 
-                std.math.big.int.Managed => self.cvtTagged(.{.integer_big = try types.refDeepCopy(item.toConst(), self.allocator())}),
-                *std.math.big.int.Const => self.cvtTagged(.{.integer_big = item}),
+                @import("tokenizer.zig").Token.Identifier => self.cvtTagged(.{ .bytes = try types.refDeepCopy(@as([]const u8, item.str), self.allocator()) }),
 
-                *types.partial.Root => self.cvtTagged(.{.root_type = item}),
-                types.partial.Root => self.cvtTagged(.{.root_type = try types.refDeepCopy(item, self.allocator())}),
+                std.math.big.int.Managed => self.cvtTagged(.{ .integer_big = try types.refDeepCopy(item.toConst(), self.allocator()) }),
+                *std.math.big.int.Const => self.cvtTagged(.{ .integer_big = item }),
 
-                *types.partial.Type => self.cvtTagged(.{.kind = item}),
-                types.partial.Type => self.cvtTagged(.{.kind = try types.refDeepCopy(item, self.allocator())}),
+                *types.partial.Root => self.cvtTagged(.{ .root_type = item }),
+                types.partial.Root => self.cvtTagged(.{ .root_type = try types.refDeepCopy(item, self.allocator()) }),
+
+                *types.partial.Type => self.cvtTagged(.{ .kind = item }),
+                types.partial.Type => self.cvtTagged(.{ .kind = try types.refDeepCopy(item, self.allocator()) }),
+
+                //struct {Item(.kind), AnyItem} => self.cvtTagged(.{.typed_value = try types.refDeepCopy(@as(TypedValue, item), self.allocator())}),
 
                 else => {
                     const info = @typeInfo(T);
                     if (info == .comptime_int) {
-                        return self.cvtTagged(.{.integer_usize = @as(usize, item)});
+                        return self.cvtTagged(.{ .integer_usize = @as(usize, item) });
                     }
                     if (info == .int and info.int.bits <= 64) {
-                        return self.cvtTagged(.{.integer_usize = item});
+                        return self.cvtTagged(.{ .integer_usize = item });
                     }
                     if (info == .pointer and info.pointer.size == .one and @typeInfo(info.pointer.child) == .array) {
-                        return self.cvtTagged(.{.bytes = try types.refDeepCopy(@as([]const u8, item), self.allocator())});
+                        return self.cvtTagged(.{ .bytes = try types.refDeepCopy(@as([]const u8, item), self.allocator()) });
                     }
                     //@compileLog(@typeInfo(T));
                     @compileError(std.fmt.comptimePrint("Cannot intern type `{s}`", .{sT}));
-                }
+                },
             };
         }
 
@@ -77,11 +80,11 @@ pub const compute = struct {
             for (0..self.array.len) |idx| {
                 const other = self.get(@enumFromInt(idx));
                 if (item.eqls(other)) {
-                    return .fromPrivate(.{.index = @enumFromInt(idx), .tag = std.meta.activeTag(item)});
+                    return .fromPrivate(.{ .index = @enumFromInt(idx), .tag = std.meta.activeTag(item) });
                 }
             }
             try self.array.append(self.allocator(), item);
-            return .fromPrivate(.{.index = @enumFromInt(self.array.len - 1), .tag = std.meta.activeTag(item)});
+            return .fromPrivate(.{ .index = @enumFromInt(self.array.len - 1), .tag = std.meta.activeTag(item) });
         }
 
         pub fn cvtStr(self: *Pool, string: anytype) !Item(.bytes) {
@@ -89,15 +92,15 @@ pub const compute = struct {
         }
     };
 
-    pub const AnyItem = enum (u64) {
+    pub const AnyItem = enum(u64) {
         _,
-        
-        const Private = packed struct (u64) {
+
+        const Private = packed struct(u64) {
             tag: Tag,
             index: Index,
         };
 
-        const Tag = enum (u3) {
+        pub const Tag = enum(u3) {
             instr_ref,
             bytes,
             integer_small_signed,
@@ -108,10 +111,9 @@ pub const compute = struct {
             typed_value,
         };
 
-
-        const Tagged = union (Tag) {
+        const Tagged = union(Tag) {
             instr_ref: Guid,
-            bytes: *[] const u8,
+            bytes: *[]const u8,
             integer_small_signed: isize,
             integer_usize: usize,
             integer_big: *std.math.big.int.Const,
@@ -128,7 +130,7 @@ pub const compute = struct {
                     .integer_big => |x| try writer.print("##{f}", .{x.*}),
                     .kind => |kind| try writer.print("type({f})", .{kind}),
                     .root_type => |kind| try writer.print("{f}", .{kind}),
-                    .typed_value => |tv| try writer.print("%{d}: {f}", .{tv.name, tv.kind}),
+                    .typed_value => |tv| try writer.print("{f}: {f}", .{ tv.value, tv.kind }),
                 }
             }
 
@@ -145,7 +147,7 @@ pub const compute = struct {
                                 .kind,
                                 .root_type,
                                 => std.meta.eql(self_pay, other_pay),
-                                
+
                                 .typed_value,
                                 => std.meta.eql(self_pay.*, other_pay.*),
 
@@ -154,15 +156,14 @@ pub const compute = struct {
 
                                 .integer_big,
                                 => self_pay.*.eql(other_pay.*),
-                                
                             };
-                        }
-                    }
+                        },
+                    },
                 }
             }
         };
 
-        const Index = enum (@Int(.unsigned, 64 - @bitSizeOf(Tag))) {
+        const Index = enum(@Int(.unsigned, 64 - @bitSizeOf(Tag))) {
             _,
         };
 
@@ -183,7 +184,20 @@ pub const compute = struct {
 
         pub fn bake(self: AnyItem, comptime tag: Tag) Item(tag) {
             std.debug.assert(self.private().tag == tag);
-            return .{.any = self};
+            return .{ .any = self };
+        }
+
+        pub fn PayloadType(comptime tag: Tag) type {
+            return @FieldType(AnyItem.Tagged, @tagName(tag));
+        }
+
+        pub fn hasTag(self: AnyItem, comptime tag: Tag) ?PayloadType(tag) {
+            if (self.private().tag == tag) return @field(self.toTagged(), @tagName(tag));
+            return null;
+        }
+
+        pub fn as(self: AnyItem, comptime tag: Tag) PayloadType(tag) {
+            return self.hasTag(tag).?;
         }
 
         pub fn format(self: AnyItem, writer: *std.Io.Writer) !void {
@@ -192,6 +206,10 @@ pub const compute = struct {
 
         pub fn fromAuto(value: anytype) !AnyItem {
             return try singleton_pool.?.cvtAuto(value);
+        }
+
+        pub fn fromTagged(value: AnyItem.Tagged) !AnyItem {
+            return try singleton_pool.?.cvtTagged(value);
         }
     };
 
@@ -204,11 +222,11 @@ pub const compute = struct {
 
             pub fn from(value: anytype) !Self {
                 const resT = @FieldType(AnyItem.Tagged, Self.expected_tag_name);
-                return .{.any = try singleton_pool.?.cvtAuto(@as(resT, value))};
+                return .{ .any = try singleton_pool.?.cvtAuto(@as(resT, value)) };
             }
 
             pub fn fromAuto(value: anytype) !Self {
-                return .{.any = try singleton_pool.?.cvtAuto(value)};
+                return .{ .any = try singleton_pool.?.cvtAuto(value) };
             }
 
             pub fn unwrap(self: Self) @FieldType(AnyItem.Tagged, Self.expected_tag_name) {
@@ -229,7 +247,7 @@ pub const compute = struct {
 
 pub const TypedValue = struct {
     kind: compute.Item(.kind),
-    name: Guid,
+    value: compute.AnyItem,
 };
 
 test "compute pool test" {
@@ -239,11 +257,11 @@ test "compute pool test" {
 
     var str: []const u8 = "Hello World!";
 
-    const x = try pool.cvtTagged(.{ .instr_ref = @enumFromInt(2)});
-    const y = try pool.cvtTagged(.{.bytes = &str});
-    const z = try pool.cvtTagged(.{.instr_ref = @enumFromInt(2)});
-    const w = try pool.cvtTagged(.{.bytes = &str});
-    
+    const x = try pool.cvtTagged(.{ .instr_ref = @enumFromInt(2) });
+    const y = try pool.cvtTagged(.{ .bytes = &str });
+    const z = try pool.cvtTagged(.{ .instr_ref = @enumFromInt(2) });
+    const w = try pool.cvtTagged(.{ .bytes = &str });
+
     try std.testing.expectEqual(x, z);
     try std.testing.expectEqual(y, w);
     try std.testing.expect(x != y);
@@ -260,7 +278,7 @@ test "compute pool test auto" {
     const y = try pool.cvtAuto(&str);
     const z = try pool.cvtAuto(@as(Guid, @enumFromInt(2)));
     const w = try pool.cvtAuto(&str);
-    
+
     try std.testing.expectEqual(x, z);
     try std.testing.expectEqual(y, w);
     try std.testing.expect(x != y);

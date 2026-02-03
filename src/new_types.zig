@@ -145,35 +145,36 @@ pub const partial = struct {
 
             /// Returns the integer value which this must be at least equal to. 
             /// Either implicitly from the backing bits or explicitly set from ranging
-            pub fn lowBound(self: Integer, alloc: std.mem.Allocator) !compute.Item(.integer_big) {
+            /// Do not assume that because the return is managed that the allocator is live
+            pub fn lowBound(self: Integer, alloc: std.mem.Allocator) !std.math.big.int.Managed {
                 if (self.low) |low| {
-                    return low;
+                    return low.unwrap().toManaged(std.mem.Allocator.failing);
                 }
                 if (self.backing.explicit.signed) {
                     var ret: std.math.big.int.Managed = try .initSet(alloc, 1);
                     try ret.shiftLeft(&ret, self.backing.explicit.bits - 1);
                     ret.negate();
-                    return try .from(ret.toConst());
+                    return ret;
                 } else {
-                    var ret: std.math.big.int.Managed =  try .initSet(alloc, 0);
-                    return try .from(ret.toConst());
+                    const ret: std.math.big.int.Managed =  try .initSet(alloc, 0);
+                    return ret;
                 }
             }
 
             pub fn highBound(self: Integer, alloc: std.mem.Allocator) !std.math.big.int.Managed {
                 if (self.high) |high| {
-                    return high;
+                    return high.unwrap().toManaged(std.mem.Allocator.failing);
                 }
                 if (self.backing.explicit.signed) {
                     var ret: std.math.big.int.Managed = try .initSet(alloc, 1);
                     try ret.shiftLeft(&ret, self.backing.explicit.bits - 1);
                     try ret.addScalar(&ret, -1);
-                    return try .from(ret.toConst());
+                    return ret;
                 } else {
                     var ret: std.math.big.int.Managed = try .initSet(alloc, 1);
                     try ret.shiftLeft(&ret, self.backing.explicit.bits);
                     try ret.addScalar(&ret, -1);
-                    return try .from(ret.toConst());
+                    return ret;
                 }
             }
         };
