@@ -1,42 +1,60 @@
 const std = @import("std");
 
 const compute_pool = @import("compute_pool.zig");
+const compute = @import("new_compute_pool.zig").compute;
 const slir = @import("slir.zig");
 const SLIR = slir.SLIR;
 const Instr = SLIR.Function.Block.Instruction;
 const slir_cons = @import("slir_construction.zig");
 const MutSLIR = slir_cons.MutSLIR;
-const StringInternPool = @import("string_intern_pool.zig").StringInternPool;
-const String = StringInternPool.String;
+//const StringInternPool = @import("string_intern_pool.zig").StringInternPool;
+const String = SLIR.String;
 const types = @import("types.zig");
+const new_types = @import("new_types.zig");
 const extra_fmt = @import("extra_fmt.zig");
 
 const big_int = std.math.big.int;
 
-const Type = types.partial.Type;
-const RootType = types.partial.Root;
-const Compute = compute_pool.ComputePool.Compute;
-const ComputeItem = compute_pool.ComputePool.Item;
+const Type = new_types.partial.Type;
+const RootType = new_types.partial.Root;
+// const Compute = compute_pool.ComputePool.Compute;
+// const SLIR.AnyItem = compute_pool.ComputePool.Item;
 
 const deepCopy = types.deepCopy;
 const refDeepCopy = types.refDeepCopy;
 
+var canon_type_type: compute.Item(.kind) = undefined;
+
 pub fn resolve(ir: MutSLIR) !void {
-    var main = getFunctionByName(ir, try ir.slir.intern.convert("Main")).?;
+    try initTypeType();
+    var main = getFunctionByName(ir, try ir.slir.compute_pool.cvtStr("Main")).?;
     try computeRef(ir, main.resT);
     for (main.blocks.items) |block| {
         for (block.instrs.items) |instr| {
             if (mustResolve(instr)) {
                 if (!(instr.results.items.len >= 1)) std.debug.panic("Instruction `{}`, must have a result", .{instr});
-                std.debug.assert(instr.results.items.len >= 1); //All must compute instructions must have a result even if unused
+                std.debug.assert(instr.results.items.len >= 1); //All must-compute instructions must have a result even if unused
                 try computeRef(ir, instr.results.items[0]);
             }
         }
     }
 }
 
-fn computeRef(ir: MutSLIR, target: SLIR.Reference) !void {
-    var compute_queue: std.ArrayList(SLIR.Reference) = .empty;
+fn initTypeType() !void {
+    const root_type_type: RootType = .kind;
+    const type_type: Type = .{
+        .access = .view, 
+        .data = .@"const", 
+        .pack_as = 0, .bitalign = 0, 
+        .aggregate = .{ 
+            .root = try .fromAuto(root_type_type) 
+        }
+    };
+    canon_type_type = try .fromAuto(type_type);
+}
+
+fn computeRef(ir: MutSLIR, target: SLIR.AnyItem) !void {
+    var compute_queue: std.ArrayList(SLIR.AnyItem) = .empty;
     try compute_queue.append(ir.slir.alloc, target);
     errdefer {
         std.debug.print("Dependency queue is {any}\n", .{compute_queue.items});
@@ -67,7 +85,7 @@ const EvalCtx = struct {
     func: *SLIR.Function, 
 };
 
-fn evaluateInstruction(ir: MutSLIR, context: EvalCtx) !?[]SLIR.Reference {
+fn evaluateInstruction(ir: MutSLIR, context: EvalCtx) !?[]SLIR.AnyItem {
     std.debug.print("Evaled: `{f}`\n", .{context.instr});
     defer std.debug.print("Into:   `{f}`\n{f}\n", .{context.instr, ir.slir});
     switch (context.instr.tag) { inline else => |tag| {
@@ -91,17 +109,17 @@ fn evaluateInstruction(ir: MutSLIR, context: EvalCtx) !?[]SLIR.Reference {
 
 const eval_impl = struct {
 
-    pub fn opTypeSignedInt(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.Reference {
+    pub fn opTypeSignedInt(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.AnyItem {
         return genericOpTypeInteger(ir, ctx, true);
     }
 
-    pub fn opTypeUnsignedInt(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.Reference {
+    pub fn opTypeUnsignedInt(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.AnyItem {
         return genericOpTypeInteger(ir, ctx, false);
     }
 
-    fn genericOpTypeInteger(ir: MutSLIR, ctx: EvalCtx, signed: bool) !?[]SLIR.Reference {
-        const bits = ctx.instr.args.items[0].toTaggedUnion().int;
-        const ref: SLIR.Reference = try makeInteger(
+    fn genericOpTypeInteger(ir: MutSLIR, ctx: EvalCtx, signed: bool) !?[]SLIR.AnyItem {
+        const bits = ctx.instr.args.items[0].toTagged().integer_usize;
+        const ref: SLIR.AnyItem = try makeInteger(
             ir,
             .{ .explicit = .{ .bits = bits, .signed = signed }},
             .{},
@@ -111,13 +129,14 @@ const eval_impl = struct {
         return null;
     }
 
-    pub fn opTypeOf(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.Reference {
+    pub fn opTypeOf(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.AnyItem {
         const res_def = getInstrByResult(ir, ctx.instr.args.items[0]).?[2];
         if (isOperator(res_def.tag)) return res_def.results.items;
         switch (res_def.tag) {
             .struct_type_lit => {
                 const root: RootType = .kind;
-                const ref: SLIR.Reference = try refFromRootType(ir, root);
+                const ref: SLIR.AnyItem = try .fromAuto(root);
+                //const ref: SLIR.AnyItem = try refFromRootType(ir, root);
                 ctx.instr.args.items[0] = ref;
                 ctx.instr.tag = .struct_type_lit;
             },
@@ -125,86 +144,88 @@ const eval_impl = struct {
                 ctx.instr.tag = .struct_type_lit;
                 ctx.instr.args.items[0] = res_def.results.items[1];
             },
-            .struct_value => {
-                ctx.instr.tag = .alias;
-                ctx.instr.args.items[0] = res_def.args.items[1];
-            },
-            .struct_int_lit => {
-                const val = switch (computeItemFromInstrArg(ir, res_def, 0)) {
-                    .int_small => |x| 
-                        (
-                            try big_int.Managed.initSet(ir.slir.alloc, x)
-                        ).toMutable(),
+            // .struct_value => {
+            //     ctx.instr.tag = .alias;
+            //     ctx.instr.args.items[0] = res_def.args.items[1];
+            // },
+            // .struct_int_lit => {
+            //     const val = switch (computeItemFromInstrArg(ir, res_def, 0)) {
+            //         .int_small => |x| 
+            //             (
+            //                 try big_int.Managed.initSet(ir.slir.alloc, x)
+            //             ).toMutable(),
                     
-                    .int_big => |x| 
-                        x.toMutable(),
+            //         .int_big => |x| 
+            //             x.toMutable(),
                     
-                    else => unreachable,
-                };
-                const ref: SLIR.Reference = try makeInteger(ir, .implicit, .{
-                    .alloc = ir.slir.alloc,
-                    .low = val,
-                    .high = val,
-                });
+            //         else => unreachable,
+            //     };
+            //     const ref: SLIR.AnyItem = try makeInteger(ir, .implicit, .{
+            //         .alloc = ir.slir.alloc,
+            //         .low = val,
+            //         .high = val,
+            //     });
 
-                ctx.instr.args.items[0] = ref;
-                ctx.instr.tag = .struct_type_lit;
-            },
+            //     ctx.instr.args.items[0] = ref;
+            //     ctx.instr.tag = .struct_type_lit;
+            // },
             else => try ir.slir.showError(ctx.instr.span, "Bad tag `{t}` for typeof.", .{res_def.tag}),
                 //std.debug.panic(),
         }
         return null;
     }
 
-    fn typeOf(ir: MutSLIR, res_def: *Instr) !SLIR.Reference {
+    fn typeOf(ir: MutSLIR, res_def: *Instr) !SLIR.AnyItem {
+        _ = ir;
         switch (res_def.tag) {
             .struct_type_lit => {
                 const root: RootType = .kind;
-                const ref: SLIR.Reference = try refFromRootType(ir, root);
+                const ref: SLIR.AnyItem = try .fromAuto(root);
                 return ref;
             },
             .typed_op_add, => {
                 return res_def.results.items[1];
             },
-            .struct_value => {
-                //return res_def.args.items[1];
-                return getInstrByResult(ir, res_def.args.items[1]).?[2].args.items[0];
-            },
-            .struct_int_lit => {
-                const val = switch (computeItemFromInstrArg(ir, res_def, 0)) {
-                    .int_small => |x| 
-                        (
-                            try big_int.Managed.initSet(ir.slir.alloc, x)
-                        ).toMutable(),
+            // .struct_value => {
+            //     //return res_def.args.items[1];
+            //     return getInstrByResult(ir, res_def.args.items[1]).?[2].args.items[0];
+            // },
+            // .struct_int_lit => {
+            //     const val = switch (computeItemFromInstrArg(ir, res_def, 0)) {
+            //         .int_small => |x| 
+            //             (
+            //                 try big_int.Managed.initSet(ir.slir.alloc, x)
+            //             ).toMutable(),
                     
-                    .int_big => |x| 
-                        x.toMutable(),
+            //         .int_big => |x| 
+            //             x.toMutable(),
                     
-                    else => unreachable,
-                };
-                const ref: SLIR.Reference = try makeInteger(ir, .implicit, .{
-                    .alloc = ir.slir.alloc,
-                    .low = val,
-                    .high = val,
-                });
+            //         else => unreachable,
+            //     };
+            //     const ref: SLIR.AnyItem = try makeInteger(ir, .implicit, .{
+            //         .alloc = ir.slir.alloc,
+            //         .low = val,
+            //         .high = val,
+            //     });
 
-                return ref;
-            },
+            //     return ref;
+            // },
             else => std.debug.panic("Bad tag `{t}` for typeof.", .{res_def.tag}),
         }
         unreachable;
     }
 
-    pub fn opDecimalIntegerLit(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.Reference {
-        const str = stringFromInstrArg(ir, ctx.instr, 0);
+    pub fn opDecimalIntegerLit(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.AnyItem {
+        const str = ctx.instr.args.items[0].toTagged().bytes;
+        //const str = stringFromInstrArg(ir, ctx.instr, 0);
 
-        ctx.instr.args.items[0] = try genericIntegerLit(ir, ctx.instr.*, str, 10);
+        ctx.instr.args.items[0] = try genericIntegerLit(ir, ctx.instr.*, str.*, 10);
 
         ctx.instr.tag = .struct_int_lit;
         return null;
     }
 
-    fn genericIntegerLit(ir: MutSLIR, instr: Instr, str: []const u8, base: comptime_int) !SLIR.Reference {
+    fn genericIntegerLit(ir: MutSLIR, instr: Instr, str: []const u8, base: comptime_int) !SLIR.AnyItem {
         const alloc = ir.slir.alloc;
         
         var int: big_int.Managed = try .initSet(alloc, 0);
@@ -236,33 +257,35 @@ const eval_impl = struct {
             }
         }
         if (int.toInt(usize)) |x| {
-            return try refFromCompute(ir, x);
+            return .fromAuto(x);
+            //return try refFromCompute(ir, x);
         } else |_| {
-            return try refFromComputeCopied(ir, int);
+            return .fromAuto(int);
+            //return try refFromComputeCopied(ir, int);
         }
     }
 
-    pub fn qualifyTypeConst(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.Reference {
+    pub fn qualifyTypeConst(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.AnyItem {
         return genericQualifyType(ir, ctx, .{ .data = .@"const" });
     }
 
-    pub fn qualifyTypeVar(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.Reference {
+    pub fn qualifyTypeVar(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.AnyItem {
         return genericQualifyType(ir, ctx, .{ .data = .@"var" });
     }
 
-    pub fn qualifyTypeView(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.Reference {
+    pub fn qualifyTypeView(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.AnyItem {
         return genericQualifyType(ir, ctx, .{ .access = .view });
     }
 
-    pub fn qualifyTypeMut(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.Reference {
+    pub fn qualifyTypeMut(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.AnyItem {
         return genericQualifyType(ir, ctx, .{ .access = .mut });
     }
 
     const GenericQualifier = union (enum) {
-        data: types.qualifier.Data, 
-        access: types.qualifier.Access
+        data: new_types.qualifier.Data, 
+        access: new_types.qualifier.Access
     };
-    fn genericQualifyType(ir: MutSLIR, ctx: EvalCtx, qualifier: GenericQualifier) !?[]SLIR.Reference {
+    fn genericQualifyType(ir: MutSLIR, ctx: EvalCtx, qualifier: GenericQualifier) !?[]SLIR.AnyItem {
         var res_def = getInstrByResult(ir, ctx.instr.args.items[0]).?[2];
         if (isOperator(res_def.tag)) return res_def.results.items;
 
@@ -270,8 +293,8 @@ const eval_impl = struct {
             res_def = getInstrByResult(ir, res_def.args.items[0]).?[2];
         }
 
-        const kind = computeItemFromInstrArg(ir, res_def, 0).kind;
-        const new_kind = try deepCopy(kind, ir.slir.alloc);
+        var new_kind = res_def.args.items[0].toTagged().kind;
+        //var new_kind = computeItemFromInstrArg(ir, res_def, 0).toTagged().kind;
 
         switch (qualifier) {
             .data => |new_data| {
@@ -289,85 +312,84 @@ const eval_impl = struct {
         }
         
         ctx.instr.tag = .struct_type_lit;
-        const ref = try refFromCompute(ir, new_kind);
+        const ref: SLIR.AnyItem = try .fromAuto(new_kind);
         ctx.instr.args.items[0] = ref;
         return null;
     }
 
-    pub fn opLoadNamedValue(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.Reference {
+    pub fn opLoadNamedValue(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.AnyItem {
         _ = ir;
-        const value = getNamedValue(ctx.func, ctx.block, ctx.instr.args.items[0].toTaggedUnion().string_ref) orelse @panic("Name no exisyt");
+        const value = getNamedValue(ctx.func, ctx.block, ctx.instr.args.items[0].bake(.bytes)) orelse @panic("Name no exisyt");
         ctx.instr.tag = .alias;
         ctx.instr.args.items[0] = value;
         return null;
     }
 
     //TODO: ???????
-    pub fn ensureMayCast(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.Reference {
-        const arg1 = ctx.instr.args.items[1].toTaggedUnion();
-        if (arg1 == .compute_ref) {
-            const item1 = arg1.compute_ref.toItem(ir.slir.computes.*);
-            if (item1 == .kind) {
-                switch (item1.kind.aggregate) {
-                    .root => |root| switch (root.*) {
-                        .kind => {
-                            ctx.instr.tag = .alias;
-                            ctx.instr.args.shrinkRetainingCapacity(1);
-                        },
-                        .integer => |res_int| {
-                            const src_type = switch (try getArgType(ir, ctx, 0)) {
-                                .dep => |deps| return deps,
-                                .types => |lhs_type| lhs_type.kind,
-                            };
-                            switch (src_type.aggregate) {
-                                .root => |src_root| switch (src_root.*) {
-                                    .integer => |src_int| {
-                                        const src_low = try src_int.lowBound(ir.slir.alloc);
-                                        const src_high = try src_int.highBound(ir.slir.alloc);
+    pub fn ensureMayCast(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.AnyItem {
+        _ = ir;
+        _ = ctx;
+        // const arg1 = ctx.instr.args.items[1].toTagged();
+        // if (arg1 == .kind) switch (arg1.kind.aggregate) {
+        //     .root => |root| switch (root.unwrap()) {
+        //         .kind => {
+        //             ctx.instr.tag = .alias;
+        //             ctx.instr.args.shrinkRetainingCapacity(1);
+        //         },
+        //         .integer => |res_int| {
+        //             const src_type = switch (try getArgType(ir, ctx, 0)) {
+        //                 .dep => |deps| return deps,
+        //                 .types => |lhs_type| lhs_type.kind,
+        //             };
+        //             switch (src_type.aggregate) {
+        //                 .root => |src_root| switch (src_root.unwrap()) {
+        //                     .integer => |src_int| {
+        //                         const src_low = try src_int.lowBound(ir.slir.alloc);
+        //                         const src_high = try src_int.highBound(ir.slir.alloc);
 
-                                        var res_low = try res_int.lowBound(ir.slir.alloc);
-                                        var res_high = try res_int.highBound(ir.slir.alloc);
-                                        try res_low.sub(&src_low, &res_low);
-                                        if (!(res_low.isPositive() or res_low.eqlZero())) {
-                                            try ir.slir.showError(ctx.instr.span, "Cannot coerce {f} into narrower range {f}\n", .{src_root, root});
-                                        }
+        //                         var res_low = try res_int.lowBound(ir.slir.alloc);
+        //                         var res_high = try res_int.highBound(ir.slir.alloc);
+        //                         try res_low.sub(&src_low, &res_low);
+        //                         if (!(res_low.isPositive() or res_low.eqlZero())) {
+        //                             try ir.slir.showError(ctx.instr.span, "Cannot coerce {f} into narrower range {f}\n", .{src_root, root});
+        //                         }
 
-                                        try res_high.sub(&res_high, &src_high);
-                                        if (!(res_high.isPositive() or res_high.eqlZero())) {
-                                            try ir.slir.showError(ctx.instr.span, "Cannot coerce {f} into narrower range {f}\n", .{src_root, root});
-                                        }
-                                    },
-                                    else => try ir.slir.showError(ctx.instr.span, "Cannot coerce Non-Integer to integer\n", .{}),
-                                }
-                            }
-                            //try ir.slir.showError(ctx.instr.span, "Unimplemented cast check\n", .{});
-                        }
-                    },
-                }
-                // if (item1.kind.aggregate == .root and item1.kind.aggregate.root.* == .kind) {
+        //                         try res_high.sub(&res_high, &src_high);
+        //                         if (!(res_high.isPositive() or res_high.eqlZero())) {
+        //                             try ir.slir.showError(ctx.instr.span, "Cannot coerce {f} into narrower range {f}\n", .{src_root, root});
+        //                         }
+        //                     },
+        //                     else => try ir.slir.showError(ctx.instr.span, "Cannot coerce Non-Integer to integer\n", .{}),
+        //                 }
+        //             }
+        //             //try ir.slir.showError(ctx.instr.span, "Unimplemented cast check\n", .{});
+        //         }
+        //     },
+        //     // }
+        //         // if (item1.kind.aggregate == .root and item1.kind.aggregate.root.* == .kind) {
                     
-                // } else {
+        //         // } else {
 
                     
-                //     //std.debug.print("WARN: Unimplemented cast check\n", .{});
-                // }
-            } else {
-                try ir.slir.showError(ctx.instr.span, "Result is compute of nontype {}\n", .{item1});
-                //std.debug.print("WARN: Result is compute of nontype {}\n", .{item0});
-            }
-        } else if (arg1 == .instr_ref) {
-            const oinstr = getInstrByResult(ir, ctx.instr.args.items[1]).?[2];
-            if (oinstr.tag != .struct_type_lit) return oinstr.results.items;
-            ctx.instr.args.items[1] = oinstr.args.items[0];
-            return &.{};
-        } else {
-            std.debug.print("WARN: cast of {}\n", .{ctx.instr});
-            return error.bad;
-        }
+        //         //     //std.debug.print("WARN: Unimplemented cast check\n", .{});
+        //         // }
+        //     // } else {
+        //     //     try ir.slir.showError(ctx.instr.span, "Result is compute of nontype {}\n", .{item1});
+        //     //     //std.debug.print("WARN: Result is compute of nontype {}\n", .{item0});
+        //     // }
+        // } else if (arg1 == .instr_ref) {
+        //     const oinstr = getInstrByResult(ir, ctx.instr.args.items[1]).?[2];
+        //     if (oinstr.tag != .struct_type_lit) return oinstr.results.items;
+        //     ctx.instr.args.items[1] = oinstr.args.items[0];
+        //     return &.{};
+        // } else {
+        //     std.debug.print("WARN: cast of {}\n", .{ctx.instr});
+        //     return error.bad;
+        // }
         return null;
     }
 
-    pub fn ensureIsType(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.Reference {
+    pub fn ensureIsType(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.AnyItem {
         const res_def = getInstrByResult(ir, ctx.instr.args.items[0]).?[2];
         if (isOperator(res_def.tag)) return res_def.results.items;
 
@@ -385,8 +407,8 @@ const eval_impl = struct {
     }
 
     const TypesOrDependencies = union (enum) {
-        dep: []SLIR.Reference,
-        types: struct {ComputeItem, ComputeItem},
+        dep: []SLIR.AnyItem,
+        types: struct {SLIR.AnyItem, SLIR.AnyItem},
     };
     fn getBinaryTypes(ir: MutSLIR, ctx: EvalCtx) !TypesOrDependencies {
         const lhs_instr = getInstrByResult(ir, ctx.instr.args.items[0]).?[2];
@@ -398,15 +420,15 @@ const eval_impl = struct {
         const lhs_type_ref = try typeOf(ir, lhs_instr);
         const rhs_type_ref = try typeOf(ir, rhs_instr);
 
-        const lhs_type = computeItemFromReference(ir, lhs_type_ref);
-        const rhs_type = computeItemFromReference(ir, rhs_type_ref);
+        // const lhs_type = computeItemFromReference(ir, lhs_type_ref);
+        // const rhs_type = computeItemFromReference(ir, rhs_type_ref);
 
-        return .{ .types = .{lhs_type, rhs_type} };
+        return .{ .types = .{lhs_type_ref, rhs_type_ref} };
     }
 
     const TypeOrDependency = union (enum) {
-        dep: []SLIR.Reference,
-        types: ComputeItem,
+        dep: []SLIR.AnyItem,
+        types: SLIR.AnyItem,
     };
     fn getArgType(ir: MutSLIR, ctx: EvalCtx, idx: usize) !TypeOrDependency {
         const lhs_instr = getInstrByResult(ir, ctx.instr.args.items[idx]).?[2];
@@ -414,61 +436,61 @@ const eval_impl = struct {
 
         const lhs_type_ref = try typeOf(ir, lhs_instr);
 
-        const lhs_type = computeItemFromReference(ir, lhs_type_ref);
+        // const lhs_type = computeItemFromReference(ir, lhs_type_ref);
 
-        return .{ .types = lhs_type };
+        return .{ .types = lhs_type_ref };
     }
 
     ///Doesnt actually perform the add at comptime, just computes the type of the result
-    pub fn opAdd(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.Reference {
-        const lhs_type, 
-        const rhs_type = switch (try getBinaryTypes(ir, ctx)) {
-            .dep => |deps| return deps,
-            .types => |lhs_rhs| lhs_rhs,
-        };
+    // pub fn opAdd(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.AnyItem {
+    //     const lhs_type, 
+    //     const rhs_type = switch (try getBinaryTypes(ir, ctx)) {
+    //         .dep => |deps| return deps,
+    //         .types => |lhs_rhs| lhs_rhs,
+    //     };
 
-        const alloc = ir.slir.alloc;
-        switch (lhs_type.kind.aggregate) {
-            .root => |lhs_root| switch (lhs_root.*) {
-                .integer => |lhs_int| switch (rhs_type.kind.aggregate) {
-                    .root => |rhs_root| switch (rhs_root.*) {
-                        .integer => |rhs_int| {
-                            const lhs_low = try lhs_int.lowBound(alloc);
-                            const lhs_high = try lhs_int.highBound(alloc);
+    //     const alloc = ir.slir.alloc;
+    //     switch (lhs_type.kind.aggregate) {
+    //         .root => |lhs_root| switch (lhs_root.*) {
+    //             .integer => |lhs_int| switch (rhs_type.kind.aggregate) {
+    //                 .root => |rhs_root| switch (rhs_root.*) {
+    //                     .integer => |rhs_int| {
+    //                         const lhs_low = try lhs_int.lowBound(alloc);
+    //                         const lhs_high = try lhs_int.highBound(alloc);
 
-                            const rhs_low = try rhs_int.lowBound(alloc);
-                            const rhs_high = try rhs_int.highBound(alloc);
+    //                         const rhs_low = try rhs_int.lowBound(alloc);
+    //                         const rhs_high = try rhs_int.highBound(alloc);
                             
-                            var res_low: big_int.Managed = try .init(alloc);
-                            try res_low.add(&lhs_low, &rhs_low);
+    //                         var res_low: big_int.Managed = try .init(alloc);
+    //                         try res_low.add(&lhs_low, &rhs_low);
 
-                            var res_high: big_int.Managed = try .init(alloc);
-                            try res_high.add(&lhs_high, &rhs_high);
+    //                         var res_high: big_int.Managed = try .init(alloc);
+    //                         try res_high.add(&lhs_high, &rhs_high);
 
-                            const ref: SLIR.Reference = try makeInteger(ir, .implicit, .{
-                                .alloc = alloc,
-                                .low = res_low.toMutable(),
-                                .high = res_high.toMutable(),
-                            });
+    //                         const ref: SLIR.AnyItem = try makeInteger(ir, .implicit, .{
+    //                             .alloc = alloc,
+    //                             .low = res_low.toMutable(),
+    //                             .high = res_high.toMutable(),
+    //                         });
 
-                            try ctx.instr.results.append(alloc, ref);
-                        },
-                        else => unreachable,
-                    },
-                    //else => unreachable,
-                },
-                else => unreachable,
-            },
-            //else => unreachable,
-        }
+    //                         try ctx.instr.results.append(alloc, ref);
+    //                     },
+    //                     else => unreachable,
+    //                 },
+    //                 //else => unreachable,
+    //             },
+    //             else => unreachable,
+    //         },
+    //         //else => unreachable,
+    //     }
             
 
-        //std.debug.print("Umm, heres some info?\n{f}\n{f}\n", .{lhs_type, rhs_type});
-        ctx.instr.tag = .typed_op_add;
-        return null;
-    }
+    //     //std.debug.print("Umm, heres some info?\n{f}\n{f}\n", .{lhs_type, rhs_type});
+    //     ctx.instr.tag = .typed_op_add;
+    //     return null;
+    // }
 
-    pub fn opStructValue(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.Reference {
+    pub fn opStructValue(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.AnyItem {
         const res_def = getInstrByResult(ir, ctx.instr.args.items[1]).?[2];
         if (isOperator(res_def.tag)) return res_def.results.items;
         ctx.instr.tag = .struct_value;
@@ -478,25 +500,25 @@ const eval_impl = struct {
     //////////////////////////////////////////////////////////////////////
     //
 
-    pub fn structIntLit(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.Reference {
+    pub fn structIntLit(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.AnyItem {
         _ = ir;
         _ = ctx;
         return null;
     }
 
-    pub fn structTypeLit(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.Reference {
+    pub fn structTypeLit(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.AnyItem {
         _ = ir;
         _ = ctx;
         return null;
     }
 
-    pub fn structValue(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.Reference {
+    pub fn structValue(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.AnyItem {
         _ = ir;
         _ = ctx;
         return null;
     }
 
-    pub fn typedOpAdd(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.Reference {
+    pub fn typedOpAdd(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.AnyItem {
         _ = ir;
         _ = ctx;
         return null;
@@ -505,7 +527,7 @@ const eval_impl = struct {
     //
     //////////////////////////////////////////////////////////////////////
 
-    pub fn template(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.Reference {
+    pub fn template(ir: MutSLIR, ctx: EvalCtx) !?[]SLIR.AnyItem {
         _ = ir;
         _ = ctx;
         return null;
@@ -515,45 +537,45 @@ const eval_impl = struct {
         return std.mem.startsWith(u8, @tagName(tag), "op") or std.mem.startsWith(u8, @tagName(tag), "ensure");
     }
 
-    fn refFromComputeCopied(ir: MutSLIR, val: anytype) !SLIR.Reference {
-        return refFromCompute(ir, try refDeepCopy(val, ir.slir.alloc));
-    }
+    // fn refFromComputeCopied(ir: MutSLIR, val: anytype) !SLIR.AnyItem {
+    //     return refFromCompute(ir, try refDeepCopy(val, ir.slir.alloc));
+    // }
 
-    fn refFromCompute(ir: MutSLIR, val: anytype) !SLIR.Reference {
-        return .fromCompute(try ir.slir.computes.convert(val));
-    }
+    // fn refFromCompute(ir: MutSLIR, val: anytype) !SLIR.AnyItem {
+    //     return .fromCompute(try ir.slir.computes.convert(val));
+    // }
 
-    fn refFromType(ir: MutSLIR, kind: Type) !SLIR.Reference {
-        return refFromComputeCopied(ir, kind);
-    }
+    // fn refFromType(ir: MutSLIR, kind: Type) !SLIR.AnyItem {
+    //     return refFromComputeCopied(ir, kind);
+    // }
 
-    fn refFromRootType(ir: MutSLIR, root: RootType) !SLIR.Reference {
-        return refFromType(ir, .fromRoot(try refDeepCopy(root, ir.slir.alloc)));
-    }
+    // fn refFromRootType(ir: MutSLIR, root: RootType) !SLIR.AnyItem {
+    //     return refFromType(ir, .fromRoot(try refDeepCopy(root, ir.slir.alloc)));
+    // }
 
-    fn computeItemFromReference(ir: MutSLIR, ref: SLIR.Reference) ComputeItem {
-        return ref.toTaggedUnion().compute_ref.toItem(ir.slir.computes.*);
-    }
+    // fn computeItemFromReference(ir: MutSLIR, ref: SLIR.AnyItem) SLIR.AnyItem {
+    //     return ref.toTaggedUnion().compute_ref.toItem(ir.slir.computes.*);
+    // }
 
-    fn computeItemFromInstrArg(ir: MutSLIR, instr: *Instr, arg_id: usize) ComputeItem {
-        return computeItemFromReference(ir, instr.args.items[arg_id]);
-    }
+    // fn computeItemFromInstrArg(ir: MutSLIR, instr: *Instr, arg_id: usize) SLIR.AnyItem {
+    //     return computeItemFromReference(ir, instr.args.items[arg_id]);
+    // }
 
-    fn stringFromInstrArg(ir: MutSLIR, instr: *Instr, arg_id: usize) []const u8 {
-        return instr.args.items[arg_id].toTaggedUnion().string_ref.toStr(ir.slir.intern.*);
-    }
+    // fn stringFromInstrArg(ir: MutSLIR, instr: *Instr, arg_id: usize) []const u8 {
+    //     return instr.args.items[arg_id].toTaggedUnion().string_ref.toStr(ir.slir.intern.*);
+    // }
 
-    fn isDataSubset(lhs: ?types.qualifier.Data, rhs: types.qualifier.Data) bool {
+    fn isDataSubset(lhs: ?new_types.qualifier.Data, rhs: new_types.qualifier.Data) bool {
         return (lhs orelse return true).isSubset(rhs);
     }
 
-    fn isAccessSubset(lhs: ?types.qualifier.Access, rhs: types.qualifier.Access) bool {
+    fn isAccessSubset(lhs: ?new_types.qualifier.Access, rhs: new_types.qualifier.Access) bool {
         return (lhs orelse return true).isSubset(rhs);
     }
 };
 
 //Return null to mean no dependencies
-fn _evaluateInstruction(ir: MutSLIR, func: *SLIR.Function, block: *SLIR.Function.Block, instr: *Instr) !?[]SLIR.Reference {
+fn _evaluateInstruction(ir: MutSLIR, func: *SLIR.Function, block: *SLIR.Function.Block, instr: *Instr) !?[]SLIR.AnyItem {
     switch (instr.tag) {
         .op_load_named_value => {
             const value = getNamedValue(func, block, instr.args.items[0].toTaggedUnion().string_ref) orelse @panic("Name no exisyt");
@@ -587,13 +609,13 @@ fn _evaluateInstruction(ir: MutSLIR, func: *SLIR.Function, block: *SLIR.Function
     return null;
 }
 
-fn getNamedValue(func: *SLIR.Function, origin: *SLIR.Function.Block, name: String) ?SLIR.Reference {
+fn getNamedValue(func: *SLIR.Function, origin: *SLIR.Function.Block, name: String) ?SLIR.AnyItem {
     const idx = origin - func.blocks.items.ptr;
     for (0..idx + 1) |i| {
         const block = func.blocks.items[idx - i];
         if (!blockPreceeds(block, origin)) continue;
         for (block.instrs.items) |instr| {
-            if (instr.tag == .info_named_value and instr.args.items[0].toTaggedUnion().string_ref.tag == name.tag) {
+            if (instr.tag == .info_named_value and std.meta.eql(instr.args.items[0].bake(.bytes), name)) {
                 return instr.args.items[1];
             }
         }
@@ -634,33 +656,36 @@ fn mustResolve(instr: Instr) bool {
 
 fn makeInteger(
     ir: MutSLIR,
-    backing: types.partial.Root.MakeIntegerBacking,
+    backing: new_types.partial.Root.MakeIntegerBacking,
     defaults: struct {
         alloc: ?std.mem.Allocator = null,
-        low: ?big_int.Mutable = null,
-        high: ?big_int.Mutable = null,
+        low: ?big_int.Const = null,
+        high: ?big_int.Const = null,
     },
-) !SLIR.Reference {
-    const root = try ir.slir.alloc.create(types.partial.Root);
-    root.* = try .makeInteger(backing, defaults.alloc, .{ .low = defaults.low, .high = defaults.high });
+) !SLIR.AnyItem {
+    const root = try ir.slir.alloc.create(new_types.partial.Root);
+    const low: ?compute.Item(.integer_big) = if (defaults.low) |real_low| try .from(try refDeepCopy(real_low, ir.slir.alloc)) else null;
+    const high: ?compute.Item(.integer_big) = if (defaults.high) |real_high| try .from(try refDeepCopy(real_high, ir.slir.alloc)) else null;
+    root.* = try .makeInteger(backing, defaults.alloc, .{ .low = low, .high = high });
 
-    const partial: types.partial.Type = .fromRoot(root);
+    const partial: new_types.partial.Type = .fromRoot(root);
     const heap_partial = try refDeepCopy(partial, ir.slir.alloc);
 
-    const ref: SLIR.Reference = .fromCompute(try ir.slir.computes.convert(heap_partial));
+    //const ref: SLIR.AnyItem = .fromCompute(try ir.slir.computes.convert(heap_partial));
+    const ref: SLIR.AnyItem = try .fromAuto(heap_partial);
     return ref;
 }
 
 fn getFunctionByName(ir: MutSLIR, name: String) ?*SLIR.Function {
     for (ir.slir.functions.items) |*func| {
-        if (func.name.tag == name.tag) {
+        if (func.name.any == name.any) {
             return func;
         }
     }
     return null;
 }
 
-fn getInstrByResult(ir: MutSLIR, result: SLIR.Reference) ?struct { *SLIR.Function, *SLIR.Function.Block, *Instr } {
+fn getInstrByResult(ir: MutSLIR, result: SLIR.AnyItem) ?struct { *SLIR.Function, *SLIR.Function.Block, *Instr } {
     for (ir.slir.functions.items) |*func| {
         for (func.blocks.items) |*block| {
             for (block.instrs.items) |*instr| {
@@ -678,33 +703,33 @@ fn getInstrByResult(ir: MutSLIR, result: SLIR.Reference) ?struct { *SLIR.Functio
     return null;
 }
 
-fn add(ir: MutSLIR, lhs: ComputeItem, rhs: ComputeItem) !Compute {
-    const alloc = ir.slir.alloc;
-    switch (lhs) {
-        .int_small => |x| switch (rhs) {
-            .int_small => |y| {
-                return try ir.slir.computes.convert(x + y);
-            },
-            .int_big => |y| {
-                var result: big_int.Managed = .init(alloc);
-                try result.addScalar(y, x);
-                return try ir.slir.computes.convert(try refDeepCopy(result, alloc));
-            },
-            else => unreachable,
-        },
-        .int_big => |x| switch (rhs) {
-            .int_small => |y| {
-                var result: big_int.Managed = .init(alloc);
-                try result.addScalar(x, y);
-                return try ir.slir.computes.convert(try refDeepCopy(result, alloc));
-            },
-            .int_big => |y| {
-                var result: big_int.Managed = .init(alloc);
-                try result.add(x, y);
-                return try ir.slir.computes.convert(try refDeepCopy(result, alloc));
-            },
-            else => unreachable,
-        },
-        else => unreachable,
-    }
-}
+// fn add(ir: MutSLIR, lhs: SLIR.AnyItem, rhs: SLIR.AnyItem) !Compute {
+//     const alloc = ir.slir.alloc;
+//     switch (lhs) {
+//         .int_small => |x| switch (rhs) {
+//             .int_small => |y| {
+//                 return try ir.slir.computes.convert(x + y);
+//             },
+//             .int_big => |y| {
+//                 var result: big_int.Managed = .init(alloc);
+//                 try result.addScalar(y, x);
+//                 return try ir.slir.computes.convert(try refDeepCopy(result, alloc));
+//             },
+//             else => unreachable,
+//         },
+//         .int_big => |x| switch (rhs) {
+//             .int_small => |y| {
+//                 var result: big_int.Managed = .init(alloc);
+//                 try result.addScalar(x, y);
+//                 return try ir.slir.computes.convert(try refDeepCopy(result, alloc));
+//             },
+//             .int_big => |y| {
+//                 var result: big_int.Managed = .init(alloc);
+//                 try result.add(x, y);
+//                 return try ir.slir.computes.convert(try refDeepCopy(result, alloc));
+//             },
+//             else => unreachable,
+//         },
+//         else => unreachable,
+//     }
+// }

@@ -101,27 +101,15 @@ pub const InParseSLIR = struct {
 
     pub fn addInstructionPoly(state: MutSLIR, span: SLIR.Span, results: anytype, tag: SLIR.Function.Block.Instruction.Tag, args: anytype) !void {
         const num_results = std.meta.fields(@TypeOf(results)).len;
-        const heap_results = try state.slir.alloc.alloc(SLIR.Reference, num_results);
+        const heap_results = try state.slir.alloc.alloc(SLIR.AnyItem, num_results);
         inline for (0..num_results) |i| {
-            const raw = results[i];
-            const value = if (comptime @TypeOf(raw) == Token.Identifier) (
-                try state.slir.intern.convert(raw.str)
-            ) else (
-                raw
-            );
-            heap_results[i] = SLIR.Reference.fromAny(value).?;
+            heap_results[i] = try state.slir.compute_pool.cvtAuto(results[i]);
         }
 
         const num_args = std.meta.fields(@TypeOf(args)).len;
-        const heap_args = try state.slir.alloc.alloc(SLIR.Reference, num_args);
+        const heap_args = try state.slir.alloc.alloc(SLIR.AnyItem, num_args);
         inline for (0..num_args) |i| {
-            const raw = args[i];
-            const value = if (comptime @TypeOf(raw) == Token.Identifier) (
-                try state.slir.intern.convert(raw.str)
-            ) else (
-                raw
-            );
-            heap_args[i] = SLIR.Reference.fromAny(value) orelse return error.int_too_big;
+            heap_args[i] = try state.slir.compute_pool.cvtAuto(args[i]);
         }
 
         try state.slir.currentBlock().instrs.append(state.slir.alloc, .{

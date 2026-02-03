@@ -38,7 +38,7 @@ pub const partial = struct {
         aggregate: Aggregate,
 
         pub fn fromRoot(root: *Root) Type {
-            const aggr: Aggregate = .{ .root = root };
+            const aggr: Aggregate = .{ .root = compute.Item(.root_type).from(root) catch unreachable };
             return .{
                 .aggregate = aggr,
                 .bitalign = alignOf(root.bitsize()),
@@ -115,13 +115,13 @@ pub const partial = struct {
 
         pub fn format(self: Aggregate, writer: *std.Io.Writer) !void {
             switch (self) {
-                .root => |root| try writer.print("{f}", .{root.*}),
+                .root => |root| try writer.print("{f}", .{root.unwrap()}),
             }
         }
 
         pub fn bitsize(self: Aggregate) usize {
             return switch (self) {
-                .root => |root| root.bitsize(),
+                .root => |root| root.unwrap().bitsize(),
             };
         }
     };
@@ -204,7 +204,7 @@ pub const partial = struct {
                         const lowbits = try bitcountSigned(low.unwrap(), alloc.?);
                         const highbits = try bitcountSigned(high.unwrap(), alloc.?);
                         const bits = @max(lowbits, highbits);
-                        const signed = !low.positive and !low.eqlZero(); //If the low isnt negative the high cannot be
+                        const signed = !low.unwrap().positive and !low.unwrap().eqlZero(); //If the low isnt negative the high cannot be
                         return .{ .integer = .{
                             .backing = .{ .implicit = .{.bits = bits, .signed = signed} },
                             .low = defaults.low,
@@ -273,9 +273,9 @@ fn bitcountSigned(int_const: *std.math.big.int.Const, alloc: std.mem.Allocator) 
 
     var int: std.math.big.int.Managed = try int_const.toManaged(alloc);
 
-    try int.addScalar(int.toConst(), 1);
+    try int.addScalar(&int, 1);
     int.negate();
-    return bitcount(int, alloc);
+    return bitcount(@constCast(&int.toConst()), alloc);
 }
 
 /// Returns the minimum number of bits to represent this number
@@ -289,18 +289,18 @@ fn bitcount(int_const: *std.math.big.int.Const, alloc: std.mem.Allocator) !usize
     var int: std.math.big.int.Managed = try int_const.toManaged(alloc);
 
     var ret: usize = 0;
-    const Limb = std.math.big.Limb;
-    const copy_limbs = try alloc.dupe(Limb, int.limbs);
-    var copy = int.clone(copy_limbs);
+    //const Limb = std.math.big.Limb;
+    //const copy_limbs = try alloc.dupe(Limb, int.limbs);
+    var copy = try int.clone();
     while (!int.eqlZero()) {
         for (1..64) |i| {
             const x = @as(usize, 1) << @intCast(i);
-            copy.shiftRight(int.toConst(), x);
+            try copy.shiftRight(&int, x);
             if (copy.eqlZero()) {
                 const i_ = i - 1;
                 const x_ = @as(usize, 1) << @intCast(i_);
                 ret += x_;
-                int.shiftRight(int.toConst(), x_);
+                try int.shiftRight(&int, x_);
                 break;
             }
         }

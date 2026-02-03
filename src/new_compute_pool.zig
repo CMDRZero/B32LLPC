@@ -31,26 +31,49 @@ pub const compute = struct {
             return self.array.get(@intFromEnum(index));
         }
 
-        fn cvtAuto(self: *Pool, item: anytype) !AnyItem {
-            const sT = @typeName(@TypeOf(item));
-            return switch (@TypeOf(item)) {
+        pub fn cvtAuto(self: *Pool, item: anytype) !AnyItem {
+            const T = @TypeOf(item);
+            const sT = @typeName(T);
+            return switch (T) {
+                AnyItem => return item,
+
                 Guid => self.cvtTagged(.{.instr_ref = item}),
-                isize => self.cvtTagged(.{.integer = item}),
+                isize => self.cvtTagged(.{.integer_small_signed = item}),
+                usize => self.cvtTagged(.{.integer_usize = item}),
+                
                 *[]const u8 => self.cvtTagged(.{ .bytes = item }),
+                []const u8 => self.cvtTagged(.{.bytes = try types.refDeepCopy(item, self.allocator())}),
+                []u8 => self.cvtTagged(.{.bytes = try types.refDeepCopy(@as([]const u8, item), self.allocator())}),
+                
+                @import("tokenizer.zig").Token.Identifier => self.cvtTagged(.{.bytes = try types.refDeepCopy(@as([]const u8, item.str), self.allocator())}),
+
+                std.math.big.int.Managed => self.cvtTagged(.{.integer_big = try types.refDeepCopy(item.toConst(), self.allocator())}),
+                *std.math.big.int.Const => self.cvtTagged(.{.integer_big = item}),
+
+                *types.partial.Root => self.cvtTagged(.{.root_type = item}),
+                types.partial.Root => self.cvtTagged(.{.root_type = try types.refDeepCopy(item, self.allocator())}),
+
+                *types.partial.Type => self.cvtTagged(.{.kind = item}),
+                types.partial.Type => self.cvtTagged(.{.kind = try types.refDeepCopy(item, self.allocator())}),
+
                 else => {
-                    const info = @typeInfo(@TypeOf(item));
+                    const info = @typeInfo(T);
                     if (info == .comptime_int) {
-                        return self.cvtTagged(.{.integer_small = @as(isize, item)});
+                        return self.cvtTagged(.{.integer_usize = @as(usize, item)});
                     }
-                    if (info == .int and info.int.bits <= 63) {
-                        return self.cvtTagged(.{.integer_small = item});
+                    if (info == .int and info.int.bits <= 64) {
+                        return self.cvtTagged(.{.integer_usize = item});
                     }
+                    if (info == .pointer and info.pointer.size == .one and @typeInfo(info.pointer.child) == .array) {
+                        return self.cvtTagged(.{.bytes = try types.refDeepCopy(@as([]const u8, item), self.allocator())});
+                    }
+                    //@compileLog(@typeInfo(T));
                     @compileError(std.fmt.comptimePrint("Cannot intern type `{s}`", .{sT}));
                 }
             };
         }
 
-        fn cvtTagged(self: *Pool, item: AnyItem.Tagged) !AnyItem {
+        pub fn cvtTagged(self: *Pool, item: AnyItem.Tagged) !AnyItem {
             for (0..self.array.len) |idx| {
                 const other = self.get(@enumFromInt(idx));
                 if (item.eqls(other)) {
@@ -59,6 +82,10 @@ pub const compute = struct {
             }
             try self.array.append(self.allocator(), item);
             return .fromPrivate(.{.index = @enumFromInt(self.array.len - 1), .tag = std.meta.activeTag(item)});
+        }
+
+        pub fn cvtStr(self: *Pool, string: anytype) !Item(.bytes) {
+            return (try self.cvtAuto(string)).bake(.bytes);
         }
     };
 
@@ -73,27 +100,31 @@ pub const compute = struct {
         const Tag = enum (u3) {
             instr_ref,
             bytes,
-            integer_small,
+            integer_small_signed,
+            integer_usize,
             integer_big,
             kind,
             root_type,
+            typed_value,
         };
 
 
         const Tagged = union (Tag) {
             instr_ref: Guid,
             bytes: *[] const u8,
-            integer_small: isize,
+            integer_small_signed: isize,
+            integer_usize: usize,
             integer_big: *std.math.big.int.Const,
-            kind: types.partial.Type,
-            root_type: types.partial.Root,
+            kind: *types.partial.Type,
+            root_type: *types.partial.Root,
             typed_value: *TypedValue,
 
             pub fn format(self: Tagged, writer: *std.Io.Writer) !void {
                 switch (self) {
                     .instr_ref => |guid| try writer.print("%{d}", .{guid}),
                     .bytes => |str| try writer.print("\"{s}\"", .{str.*}),
-                    .integer_small => |x| try writer.print("#{d}", .{x}),
+                    .integer_small_signed => |x| try writer.print("s#{d}", .{x}),
+                    .integer_usize => |x| try writer.print("u#{d}", .{x}),
                     .integer_big => |x| try writer.print("##{f}", .{x.*}),
                     .kind => |kind| try writer.print("type({f})", .{kind}),
                     .root_type => |kind| try writer.print("{f}", .{kind}),
@@ -108,7 +139,8 @@ pub const compute = struct {
                         inline else => |other_pay, other_tag| {
                             if (tag != other_tag) unreachable;
                             return switch (tag) {
-                                .integer_small,
+                                .integer_small_signed,
+                                .integer_usize,
                                 .instr_ref,
                                 .kind,
                                 .root_type,
@@ -150,11 +182,16 @@ pub const compute = struct {
         }
 
         pub fn bake(self: AnyItem, comptime tag: Tag) Item(tag) {
+            std.debug.assert(self.private().tag == tag);
             return .{.any = self};
         }
 
         pub fn format(self: AnyItem, writer: *std.Io.Writer) !void {
             try writer.print("{f}", .{self.toTagged()});
+        }
+
+        pub fn fromAuto(value: anytype) !AnyItem {
+            return try singleton_pool.?.cvtAuto(value);
         }
     };
 
@@ -170,6 +207,10 @@ pub const compute = struct {
                 return .{.any = try singleton_pool.?.cvtAuto(@as(resT, value))};
             }
 
+            pub fn fromAuto(value: anytype) !Self {
+                return .{.any = try singleton_pool.?.cvtAuto(value)};
+            }
+
             pub fn unwrap(self: Self) @FieldType(AnyItem.Tagged, Self.expected_tag_name) {
                 // if (self.any.toTagged() != Self.expected_tag) return error.expected_tag;
                 return @field(self.any.toTagged(), Self.expected_tag_name);
@@ -177,6 +218,10 @@ pub const compute = struct {
 
             pub fn forget(self: Self) AnyItem {
                 return self.any;
+            }
+
+            pub fn format(self: Self, writer: *std.Io.Writer) !void {
+                try writer.print("{f}", .{self.any.toTagged()});
             }
         };
     }
@@ -231,5 +276,5 @@ test "compute pool test typed" {
     const x = try pool.cvtAuto(3);
     const x_int: compute.Item(.integer_small) = x.bake(.integer_small);
     const x_new = x_int.unwrap();
-    try std.testing.expectEqual(x.toTagged().integer_small, x_new);
+    try std.testing.expectEqual(x.toTagged().integer_small_signed, x_new);
 }

@@ -5,7 +5,7 @@ const precedence = @import("precedence.zig");
 const slir = @import("slir.zig");
 const SLIR = slir.SLIR;
 const Guid = SLIR.Guid;
-const Reference = SLIR.Reference;
+const AnyItem = SLIR.AnyItem;
 const slir_cons = @import("slir_construction.zig");
 pub const MutSLIR = slir_cons.MutSLIR;
 const slir_res = @import("slir_resolution.zig");
@@ -16,10 +16,10 @@ const Token = tokenizer.Token;
 //Typing guide: Use errors for a failure and null for a probe that didnt succeed. !?T means this might return something or it might fail gently or it might fail hard.
 //Unless this function finds something that forces it to commit, speculatively return null, the caller can always promote null to an error
 
-pub fn parse(alloc: std.mem.Allocator, intern: *StringInternPool, computes: *ComputePool, file: []u8) !SLIR {
+pub fn parse(alloc: std.mem.Allocator, file: []u8) !SLIR {
     var state: slir_cons.InParseSLIR = .{
         .source_file = file,
-        .slir = .init(alloc, intern, computes),
+        .slir = .init(alloc),
     };
     errdefer {
         //std.debug.print("Unrecoverable error at:\n`{s}`\n", .{state.source_file[0..20]});
@@ -40,7 +40,7 @@ pub fn parseFunction(state: MutSLIR) !?void {
     if (!state.eatSymbol(.@"fn")) return null; //Commit on `fn`
 
     const name = try state.popIdentifier();
-    const name_str = try state.slir.intern.convert(name.str);
+    const name_str = try state.slir.compute_pool.cvtStr(name.str);
     try state.slir.functions.append(state.slir.alloc, .{
         .name = name_str,
         .args = .empty,
@@ -54,27 +54,27 @@ pub fn parseFunction(state: MutSLIR) !?void {
         try state.expectSymbol(.@":");
         const kind_ref = try parseType(state) orelse return error.expected_type;
         try curr_fn.args.append(state.slir.alloc, .{
-            .name = try state.slir.intern.convert(ident.str),
+            .name = try state.slir.compute_pool.cvtStr(ident.str),
             .kind = kind_ref,
         });
     } else |_| {}
 
     try state.expectSymbol(.@")");
     const resT = try parseType(state) orelse return error.expected_type;
-    curr_fn.resT = .fromGuid(resT);
+    curr_fn.resT = try .fromAuto(resT);
 
     try state.expectSymbol(.@"{");
     try state.slir.openScope();
     try state.slir.createEntry();
 
     ////Testing begin
-    // try state.slir.appendBlock(try state.slir.intern.convert("Test_0"));
+    // try state.slir.appendBlock(try state.slir.compute_pool.cvtAuto("Test_0"));
     // try state.slir.openScope();
-    // try state.slir.appendBlock(try state.slir.intern.convert("Test_1"));
-    // try state.slir.appendBlock(try state.slir.intern.convert("Test_2"));
-    // try state.slir.appendBlock(try state.slir.intern.convert("Test_3"));
+    // try state.slir.appendBlock(try state.slir.compute_pool.cvtAuto("Test_1"));
+    // try state.slir.appendBlock(try state.slir.compute_pool.cvtAuto("Test_2"));
+    // try state.slir.appendBlock(try state.slir.compute_pool.cvtAuto("Test_3"));
     // try state.slir.closeScope();
-    // try state.slir.appendBlock(try state.slir.intern.convert("Test_4"));
+    // try state.slir.appendBlock(try state.slir.compute_pool.cvtAuto("Test_4"));
     ////Testing end
 
     while (!state.eatSymbol(.@"}")) {
@@ -273,16 +273,16 @@ fn parseVariableDecl(state: MutSLIR) !?VarDecl {
     };
     try state.expectSymbol(.@"=");
 
-    const expr_value = try parseExpression(state, .fromGuid(kind));
+    const expr_value = try parseExpression(state, try .fromAuto(kind));
 
     if (did_infer) {
         try state.addInstructionPoly(span, .{kind}, .op_type_of, .{expr_value});
     }
     try state.expectSymbol(.@";");
-    return .{ .name = name, .value = expr_value.toTaggedUnion().instr_ref, .kind = kind };
+    return .{ .name = name, .value = expr_value.toTagged().instr_ref, .kind = kind };
 }
 
 //TODO: Add support for result type inference
-fn parseExpression(state: MutSLIR, resT: Reference) !Reference {
+fn parseExpression(state: MutSLIR, resT: AnyItem) !AnyItem {
     return try precedence.parseExpression(state, resT) orelse error.expected_expression;
 }

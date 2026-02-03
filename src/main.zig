@@ -28,15 +28,9 @@ pub fn main(init: std.process.Init) !void {
     const filetext = try std.Io.Dir.cwd().readFileAlloc(init.io, filepath, gpa, .limited(max_bytes)); //0.16.0-dev.2146+98db4570b version
     defer gpa.free(filetext);
 
-    var intern: StringInternPool = .init(arena);
-    intern.globalize();
-
-    var computes: ComputePool = .init(arena);
-    computes.globalize();
-
     try source_display.State.init(arena, filetext);
 
-    const slir = try temp_ast.parse(arena, &intern, &computes, filetext);
+    const slir = try temp_ast.parse(arena, filetext);
     std.debug.print("{f}\n", .{slir});
 
     // const span = source_display.State.Span.fromSlice(slir.functions.items[0].blocks.items[1].instrs.items[9].span.slice);

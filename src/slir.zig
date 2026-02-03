@@ -4,10 +4,11 @@ const mem = std.mem;
 const Allocator = mem.Allocator;
 
 const source_display = @import("source_display.zig");
-const ComputePool = @import("compute_pool.zig").ComputePool;
-const Compute = ComputePool.Compute;
-const StringInternPool = @import("string_intern_pool.zig").StringInternPool;
-const String = StringInternPool.String;
+// const ComputePool = @import("compute_pool.zig").ComputePo
+const compute = @import("new_compute_pool.zig").compute;
+// const Compute = ComputePool.Compute;
+// const StringInternPool = @import("string_intern_pool.zig").StringInternPool;
+// const String = StringInternPool.String;
 const tokenizer = @import("tokenizer.zig");
 
 const warningsAreErrors = false;
@@ -15,10 +16,12 @@ const censuresAreErrors = true;
 
 pub const SLIR = struct {
     alloc: Allocator,
-    intern: *StringInternPool,
-    computes: *ComputePool,
+    compute_pool: *compute.Pool,
     next_guid: Guid,
     functions: ArrayList(Function),
+
+    pub const String = compute.Item(.bytes);
+    pub const AnyItem = compute.AnyItem;
 
     pub fn showWarning(self: *SLIR, span: Span, comptime message: []const u8, args: anytype) !void {
         var disp_span: source_display.State.Span = .fromSlice(span.slice);
@@ -47,102 +50,6 @@ pub const SLIR = struct {
         return error.@"error";
     }
 
-    //Either an instruction reference, a string intern pool reference, or a plain integer.
-    pub const Reference = enum(u64) {
-        _,
-
-        const num_u32: u64 = std.math.maxInt(u32) + 1;
-
-        pub const TagType = enum {
-            instr_ref,
-            string_ref,
-            compute_ref,
-            int,
-        };
-
-        pub const Tagged = union(TagType) {
-            instr_ref: Guid,
-            string_ref: String,
-            compute_ref: Compute,
-            int: u64,
-        };
-
-        pub fn toTaggedUnion(self: Reference) Reference.Tagged {
-            var val: u64 = @intFromEnum(self);
-            if (val <= std.math.maxInt(u32)) return .{ .instr_ref = @enumFromInt(val) };
-            val -= num_u32;
-
-            if (val <= std.math.maxInt(u32)) return .{ .string_ref = .{ .tag = @enumFromInt(val), .pool = undefined } };
-            val -= num_u32;
-
-            if (val <= std.math.maxInt(u32)) return .{ .compute_ref = .{ .tag = @enumFromInt(val) } };
-            val -= num_u32;
-
-            return .{ .int = val };
-        }
-
-        pub fn fromInt(value: u64) ?Reference {
-            const offset_value = std.math.add(u64, value, 3 * num_u32) catch return null;
-            return @enumFromInt(offset_value);
-        }
-
-        pub fn fromGuid(guid: Guid) Reference {
-            return @enumFromInt(@intFromEnum(guid));
-        }
-
-        pub fn fromString(string: String) Reference {
-            return @enumFromInt(num_u32 + @intFromEnum(string.tag));
-        }
-
-        pub fn fromCompute(compute: Compute) Reference {
-            return @enumFromInt(2 * num_u32 + @intFromEnum(compute.tag));
-        }
-
-        pub fn fromAny(value: anytype) ?Reference {
-            switch (@TypeOf(value)) {
-                Reference => {
-                    return value;
-                },
-                comptime_int => {
-                    return .fromInt(value);
-                },
-                Guid => {
-                    return .fromGuid(value);
-                },
-                String => {
-                    return .fromString(value);
-                },
-                Compute => {
-                    return .fromCompute(value);
-                },
-                @import("tokenizer.zig").Token.Identifier => {
-                    @compileError("To convert `Identifier` to ReferenceType, convert it in an internpool.");
-                },
-                else => |T| {
-                    if (comptime @typeInfo(T) == .int and std.math.cast(u64, std.math.maxInt(T)) != null) return .fromInt(value);
-                    @compileError("Type `" ++ @typeName(T) ++ "` cannot be converted to ReferenceType.");
-                },
-            }
-        }
-
-        pub fn format(self: Reference, writer: *std.Io.Writer) !void {
-            switch (self.toTaggedUnion()) {
-                .instr_ref => |guid| {
-                    try writer.print("%{d}", .{guid});
-                },
-                .string_ref => |string| {
-                    try writer.print("\"{f}\"", .{string});
-                },
-                .compute_ref => |compute| {
-                    try writer.print("{f}", .{compute});
-                },
-                .int => |int| {
-                    try writer.print("#{d}", .{int});
-                },
-            }
-        }
-    };
-
     pub const Guid = enum(u32) {
         _,
         const init: Guid = @enumFromInt(1);
@@ -160,7 +67,7 @@ pub const SLIR = struct {
     pub const Function = struct {
         name: String,
         args: ArrayList(Arg),
-        resT: Reference,
+        resT: AnyItem,
         blocks: ArrayList(Block) = .empty,
         scope_depth: u32 = 0,
 
@@ -176,8 +83,8 @@ pub const SLIR = struct {
 
             pub const Instruction = struct {
                 tag: Tag,
-                results: ArrayList(Reference),
-                args: ArrayList(Reference),
+                results: ArrayList(AnyItem),
+                args: ArrayList(AnyItem),
                 span: Span,
 
                 pub const Tag = enum {
@@ -302,11 +209,10 @@ pub const SLIR = struct {
         };
     };
 
-    pub fn init(alloc: Allocator, intern: *StringInternPool, computes: *ComputePool) SLIR {
+    pub fn init(alloc: Allocator) SLIR {
         return .{
             .alloc = alloc,
-            .intern = intern,
-            .computes = computes,
+            .compute_pool = .init(alloc),
             .next_guid = .init,
             .functions = .empty,
         };
@@ -359,14 +265,14 @@ pub const SLIR = struct {
     pub fn createOnInstance(self: *SLIR) !void {
         const curr_fn = self.currentFunction();
         std.debug.assert(curr_fn.scope_depth == 0);
-        const blockname: String = try self.intern.convert("OnInstance");
+        const blockname: String = (try self.compute_pool.cvtStr("OnInstance"));
         try curr_fn.blocks.append(self.alloc, .{ .name = blockname });
     }
 
     pub fn createEntry(self: *SLIR) !void {
         const curr_fn = self.currentFunction();
         std.debug.assert(curr_fn.scope_depth == 1);
-        const blockname: String = try self.intern.convert("Entry");
+        const blockname: String = try self.compute_pool.cvtStr("Entry");
         try curr_fn.blocks.append(self.alloc, .{ .name = blockname });
         const curr_block = self.currentBlock();
         try curr_block.scope_ids.append(self.alloc, 0);
@@ -377,7 +283,7 @@ pub const SLIR = struct {
         const blockname: String = name orelse b: {
             const buf = try self.alloc.alloc(u8, 16);
             const slice = try std.fmt.bufPrint(buf, "%L{d}", .{self.getGuid()});
-            break :b try self.intern.convert(slice);
+            break :b try self.compute_pool.cvtStr(slice);
         };
         try curr_fn.blocks.ensureUnusedCapacity(self.alloc, 1);
         const prev_block = self.currentBlock();

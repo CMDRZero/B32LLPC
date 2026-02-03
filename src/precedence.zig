@@ -5,7 +5,7 @@ const MutSLIR = @import("slir_construction.zig").MutSLIR;
 const slir = @import("slir.zig");
 const SLIR = slir.SLIR;
 const Guid = SLIR.Guid;
-const Reference = SLIR.Reference;
+const AnyItem = SLIR.AnyItem;
 const StringInternPool = @import("string_intern_pool.zig").StringInternPool;
 const tokenizer = @import("tokenizer.zig");
 const Token = tokenizer.Token;
@@ -189,14 +189,14 @@ const precedence_group: TypeIndexArray(tokenizer.Operator.Tag, PrecClass) = b: {
     break :b groups;
 };
 
-pub fn parseExpression(state: MutSLIR, resT: Reference) !?Reference {
+pub fn parseExpression(state: MutSLIR, resT: AnyItem) !?AnyItem {
     const save = state.getState();
     return try parseExprPrecedence(state, .start, resT) orelse state.restoreThrow(save);
 }
 
-fn parseExprPrecedence(state: MutSLIR, min_exc_prec: PrecClass, resT: Reference) !?Reference {
+fn parseExprPrecedence(state: MutSLIR, min_exc_prec: PrecClass, resT: AnyItem) !?AnyItem {
     const span_start = state.startSpan();
-    var node: Reference = try parsePrefixExpr(state, resT) orelse return null;
+    var node: AnyItem = try parsePrefixExpr(state, resT) orelse return null;
 
     var save = state.getState();
     while (true) : (save = state.getState()) {
@@ -228,37 +228,37 @@ fn parseExprPrecedence(state: MutSLIR, min_exc_prec: PrecClass, resT: Reference)
         const res = state.slir.getGuid();
         const span = state.endSpan(span_start);
         try state.addInstructionPoly(span, .{res}, .fromOperator(operator.tag), .{ node, rhs });
-        node = try makeConstValue(state, .fromGuid(res), span);
+        node = try makeConstValue(state, try .fromAuto(res), span);
     }
 
     return node;
 }
 
 //TODO: Woefully unfinished
-fn parsePrefixExpr(state: MutSLIR, resT: Reference) !?Reference {
+fn parsePrefixExpr(state: MutSLIR, resT: AnyItem) !?AnyItem {
     return parsePrimative(state, resT);
 }
 
 
 
 //TODO: Woefully unfinished
-fn parsePrimative(state: MutSLIR, resT: Reference) !?Reference {
+fn parsePrimative(state: MutSLIR, resT: AnyItem) !?AnyItem {
     _ = resT;
     const span_start = state.startSpan();
     const token = state.popToken();
     const span = state.endSpan(span_start);
-    const value: Reference = switch (token) {
+    const value: AnyItem = switch (token) {
         .kind => |kind| ret: {
             const res = state.slir.getGuid();
             try state.addInstructionPoly(span, .{res}, .fromKindTag(kind.tag), .{kind.bits});
-            break :ret .fromGuid(res);
+            break :ret try .fromAuto(res);
         },
         .literal => |lit| ret: {
             switch (lit.tag) {
                 .dec_int => |str| {
                     const res = state.slir.getGuid();
-                    try state.addInstructionPoly(span, .{res}, .op_decimal_integer_lit, .{try state.slir.intern.convert(str)});
-                    break :ret .fromGuid(res);
+                    try state.addInstructionPoly(span, .{res}, .op_decimal_integer_lit, .{try state.slir.compute_pool.cvtAuto(str)});
+                    break :ret try .fromAuto(res);
                 },
                 else => @panic("TODO"),
             }
@@ -269,7 +269,7 @@ fn parsePrimative(state: MutSLIR, resT: Reference) !?Reference {
     return try makeConstValue(state, value, span);
 }
 
-fn makeConstValue(state: MutSLIR, value: Reference, span: SLIR.Span) !Reference {
+fn makeConstValue(state: MutSLIR, value: AnyItem, span: SLIR.Span) !AnyItem {
     var kind = state.slir.getGuid();
     try state.addInstructionPoly(span, .{kind}, .op_type_of, .{value});
     var new_kind = state.slir.getGuid();
@@ -281,5 +281,5 @@ fn makeConstValue(state: MutSLIR, value: Reference, span: SLIR.Span) !Reference 
 
     const stored_value = state.slir.getGuid();
     try state.addInstructionPoly(span, .{stored_value}, .struct_value, .{ value, new_kind });
-    return .fromGuid(stored_value);
+    return try .fromAuto(stored_value);
 }
