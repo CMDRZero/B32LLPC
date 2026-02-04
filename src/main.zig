@@ -14,11 +14,18 @@ pub fn main(init: std.process.Init) !void {
     const gpa = init.gpa;
     //const arena = init.arena.allocator();
 
-    var custom_gpa: std.heap.DebugAllocator(.{ .verbose_log = true }) = .init;
+    //var custom_gpa: std.heap.DebugAllocator(.{ .verbose_log = true }) = .init;
 
-    var iarena: std.heap.ArenaAllocator = .init(custom_gpa.allocator());
+    var iarena: std.heap.ArenaAllocator = .init(std.heap.page_allocator);
     defer iarena.deinit();
     const arena = iarena.allocator();
+
+    // errdefer std.debug.print("Bytes used: {B}\n", .{iarena.queryCapacity()});
+    // var sub_iarena: std.heap.ArenaAllocator = .init(arena);
+    // const sub_arena = sub_iarena.allocator();
+    // while (true) {
+    //     _ = try sub_arena.alloc(u8, 2048);
+    // }
 
     var filepath: []const u8 = "code/test_type_val.llpc";
 

@@ -148,7 +148,7 @@ pub const partial = struct {
             /// Do not assume that because the return is managed that the allocator is live
             pub fn lowBound(self: Integer, alloc: std.mem.Allocator) !std.math.big.int.Managed {
                 if (self.low) |low| {
-                    return low.unwrap().toManaged(std.mem.Allocator.failing);
+                    return low.unwrap().toManaged(alloc);
                 }
                 if (self.backing.explicit.signed) {
                     var ret: std.math.big.int.Managed = try .initSet(alloc, 1);
@@ -163,7 +163,7 @@ pub const partial = struct {
 
             pub fn highBound(self: Integer, alloc: std.mem.Allocator) !std.math.big.int.Managed {
                 if (self.high) |high| {
-                    return high.unwrap().toManaged(std.mem.Allocator.failing);
+                    return high.unwrap().toManaged(alloc);
                 }
                 if (self.backing.explicit.signed) {
                     var ret: std.math.big.int.Managed = try .initSet(alloc, 1);

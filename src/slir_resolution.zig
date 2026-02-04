@@ -280,6 +280,7 @@ const eval_impl = struct {
         const cast_arg_type = cast_arg_def.args.items[0].as(.typed_value).kind.unwrap().*;
 
         defer ctx.instr.tag = .alias;
+        defer ctx.instr.args.shrinkRetainingCapacity(1);
 
         if (cast_res == canon_type_type.any) {
             return null;
@@ -291,7 +292,7 @@ const eval_impl = struct {
                 unreachable;
             };
 
-            const src_low= try int_arg.lowBound(ir.slir.alloc);
+            const src_low = try int_arg.lowBound(ir.slir.alloc);
             const src_high = try int_arg.highBound(ir.slir.alloc);
 
             var res_low = try int_res.lowBound(ir.slir.alloc);
