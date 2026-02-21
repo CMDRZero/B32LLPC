@@ -147,6 +147,7 @@ pub const Token = union (TokenTag) {
         @"]",
         @"~",
         @"?",
+        @"+..",
         @"..",
         
         @"mut",
@@ -340,6 +341,13 @@ pub const Token = union (TokenTag) {
     pub fn popFrom(str: *[] u8) Token {
         while (std.ascii.isWhitespace(try peekChar(str))) {
             str.* = str.*[1..];
+        }
+        while (std.mem.startsWith(u8, str.*, "//")) {
+            const end_of_comment = std.mem.findScalar(u8, str.*, '\n') orelse str.len;
+            str.* = str.*[end_of_comment..];
+            while (std.ascii.isWhitespace(try peekChar(str))) {
+                str.* = str.*[1..];
+            }
         }
         
         //Note, this function commits changes to the slice if it succeeds

@@ -1,5 +1,5 @@
 fn Main() void {
-    const F: type = 2;
+    //const F: type = 2;
     const T = u8;
     {
         const T = u1;

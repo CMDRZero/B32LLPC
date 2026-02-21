@@ -1,0 +1,3 @@
+fn Main() void {
+    const T: type = 7;
+}

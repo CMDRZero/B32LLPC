@@ -46,7 +46,7 @@ pub const SLIR = struct {
         var writer: std.Io.Writer.Allocating = .init(self.alloc);
         defer writer.deinit();
         try disp_span.display(&writer.writer, "ERROR: "++message, args);
-        std.debug.print("{s}\n", .{writer.written()});
+        std.debug.print("{s}\nSPAN: {f}", .{writer.written(), disp_span});
         return error.@"error";
     }
 
@@ -104,29 +104,26 @@ pub const SLIR = struct {
                     op_bit_or,
                     op_bit_orn,
 
-                    typed_op_add,
-                    typed_op_sub,
-                    typed_op_mul,
-                    typed_op_div,
-                    typed_op_mod,
-
-                    typed_op_bit_shift_left,
-                    typed_op_bit_shift_right,
-
-                    typed_op_bit_and,
-                    typed_op_bit_andn,
-                    typed_op_bit_xor,
-                    typed_op_bit_xorn,
-                    typed_op_bit_or,
-                    typed_op_bit_orn,
-
                     alias,
-                    op_slice_or_range_refine,
+                    
+                    op_slice_or_range_start,
+                    op_slice_or_range_start_end,
+                    op_slice_or_range_length,
+                    
+                    op_slice_start,
+                    op_slice_start_end,
+                    op_slice_length,
+                    
+                    op_range_start,
+                    op_range_start_end,
+                    op_range_length,
 
                     op_struct_value,
                     struct_value,
 
                     op_type_of,
+
+                    op_cmp,
 
                     ensure_is_type,
                     ensure_may_cast,
@@ -150,6 +147,11 @@ pub const SLIR = struct {
 
                     info_named_value,
                     op_load_named_value,
+
+                    @"unreachable",
+                    
+                    /// eg) prove %0, "<", %1, "Slice may be out of bounds"
+                    prove,
 
                     pub fn fromOperator(op: tokenizer.Operator.Tag) Tag {
                         return switch (op) {

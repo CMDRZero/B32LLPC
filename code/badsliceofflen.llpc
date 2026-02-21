@@ -1,0 +1,4 @@
+fn Main() void {
+    //const x = 2[1 +.. ];
+    const x = 2[1..1];
+}

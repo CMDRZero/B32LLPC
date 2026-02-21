@@ -76,6 +76,7 @@ pub const State = struct {
                 const content_length = line.index_start + line.line_length - line.index_content;
                 const content = state.source[line.index_content..][0..content_length];
                 const reduced_whitespace = align_buf[0..line.amt_whitespace - min_whitespace];
+                const whitespace_red = line.amt_whitespace - reduced_whitespace.len;
                 //std.debug.print("{}\n", .{line});
                 try writer.print("{s}{s} | {s}{s}\n", .{line_str, int_align, reduced_whitespace, content});
                 
@@ -89,7 +90,7 @@ pub const State = struct {
                     col_end = reduced_whitespace.len + self.col_end;
                 }
                 const indic: [1024]u8 = @splat('^');
-                try writer.print("{s}{s} | {s}\n", .{align_buf[0..line_str.len], align_buf[0..int_align.len], indic[col_start..col_end+1]});
+                try writer.print("{s}{s} | {s}{s}\n", .{align_buf[0..line_str.len], align_buf[0..int_align.len], align_buf[0..self.col_start - whitespace_red], indic[col_start..col_end+1]});
                 //try writer.print("{s}{s} | `{s}`\n", .{line_str, int_align, state.source[line.index_start..][0..line.line_length]});
             }
             var align_buf: [1024]u8 = @splat(' ');

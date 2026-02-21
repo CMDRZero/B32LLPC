@@ -277,12 +277,16 @@ const eval_impl = struct {
         
         const cast_arg_name = getArg(ctx.instr, 0);
         const cast_arg_def = getInstrByResult(ir, cast_arg_name).?[2];
-        const cast_arg_type = cast_arg_def.args.items[0].as(.typed_value).kind.unwrap().*;
+        const cast_arg_type: new_types.partial.Type = cast_arg_def.args.items[0].as(.typed_value).kind.unwrap().*;
 
         defer ctx.instr.tag = .alias;
         defer ctx.instr.args.shrinkRetainingCapacity(1);
 
         if (cast_res == canon_type_type.any) {
+            if (cast_arg_def.args.items[0].as(.typed_value).kind.any != canon_type_type.any) {
+                try ir.slir.showError(ctx.instr.span, "Cannot coerce `non-type {f}` into type `type`\n", .{cast_arg_type});
+                unreachable;
+            }
             return null;
         }
 

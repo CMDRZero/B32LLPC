@@ -236,10 +236,106 @@ fn parseExprPrecedence(state: MutSLIR, min_exc_prec: PrecClass, resT: AnyItem) !
 
 //TODO: Woefully unfinished
 fn parsePrefixExpr(state: MutSLIR, resT: AnyItem) !?AnyItem {
-    return parsePrimative(state, resT);
+    return parsePostfixExpr(state, resT);
 }
 
+const GeneralError = error {
+    @"error",
+    ambiguous_precedence,
+    illegal_chained_operators,
+    expected_expression,
+    unexpected_symbol,
 
+    NoSpaceLeft,
+} || std.Io.Writer.Error || std.mem.Allocator.Error;
+
+fn parsePostfixExpr(state: MutSLIR, resT: AnyItem) GeneralError!?AnyItem {
+    const span_start = state.startSpan();
+    var prim = try parsePrimative(state, resT) orelse return null;
+
+    while (true) {
+        if (state.eatSymbol(.@"[")) {
+            // postfix [ expr .. expr ]
+            // postfix [ expr +.. expr ]
+            // postfix [ .. expr ]
+            // postfix [ expr .. ]
+            // postfix [ expr ]
+            
+            if (try parseExpression(state, resT)) |l_expr| {
+                // postfix [ expr .. expr ]
+                // postfix [ expr +.. expr ]
+                // postfix [ expr .. ]
+                // postfix [ expr ]
+                
+                if (state.eatSymbol(.@"+..")) {
+                    // postfix [ expr +.. expr ]
+                    if (try parseExpression(state, resT)) |r_expr| {
+                        try state.expectSymbol(.@"]");
+
+                        const span = state.endSpan(span_start);
+                        const res0 = state.slir.getGuid();
+                        try state.addInstructionPoly(span, .{res0}, .op_slice_or_range_start, .{prim, l_expr});
+                        
+                        const res1 = state.slir.getGuid();
+                        try state.addInstructionPoly(span, .{res1}, .op_slice_or_range_length, .{res0, r_expr});
+
+                        prim = try makeConstValue(state, try .fromAuto(res1), span);
+                        continue;
+                    } else {
+                        const span = state.endSpan(span_start);
+                        try state.slir.showError(span, "Expected expression after offset-length slice", .{});
+                        unreachable;
+                    }
+
+                } else if (state.eatSymbol(.@"..")) {
+                    // postfix [ expr .. expr ]
+                    // postfix [ expr .. ]
+
+                    if (try parseExpression(state, resT)) |r_expr| {
+                        try state.expectSymbol(.@"]");
+                        // postfix [ expr .. expr ]
+
+                        const span = state.endSpan(span_start);
+                        const res = state.slir.getGuid();
+                        try state.addInstructionPoly(span, .{res}, .op_slice_or_range_start_end, .{prim, l_expr, r_expr});
+                        
+                        prim = try makeConstValue(state, try .fromAuto(res), span);
+                        continue;
+                    } else {
+                        // postfix [ expr .. ]
+
+                        unreachable;
+                    }
+                } else unreachable;
+            } else {
+                // postfix [ .. expr ]
+
+                state.expectSymbol(.@"..") catch {
+                    const span = state.endSpan(span_start);
+                    try state.slir.showError(span, "Expected `..` for length slice", .{});
+                    unreachable;
+                };
+
+                if (try parseExpression(state, resT)) |r_expr| {
+                    _ = r_expr;
+                } else {
+                    const span = state.endSpan(span_start);
+                    try state.slir.showError(span, "Expected expression for length slice", .{});
+                    unreachable;
+                }
+            }
+        } else if (state.eatSymbol(.@"(")) {
+            unreachable;
+        } else if (state.eatSymbol(.@".")) {
+            unreachable;
+        } else if (state.eatSymbol(.@":")) {
+            unreachable;
+        }
+        break;
+    }
+
+    return prim;
+}
 
 //TODO: Woefully unfinished
 fn parsePrimative(state: MutSLIR, resT: AnyItem) !?AnyItem {
@@ -260,10 +356,17 @@ fn parsePrimative(state: MutSLIR, resT: AnyItem) !?AnyItem {
                     try state.addInstructionPoly(span, .{res}, .op_decimal_integer_lit, .{try state.slir.compute_pool.cvtAuto(str)});
                     break :ret try .fromAuto(res);
                 },
-                else => @panic("TODO"),
+                else => {
+                    try state.slir.showError(span, "TODO", .{});
+                    unreachable;
+                },
             }
         },
-        else => @panic("TODO"),
+        else => {
+            return null;
+            // try state.slir.showError(span, "TODO", .{});
+            // unreachable;
+        },
     };
 
     return try makeConstValue(state, value, span);
